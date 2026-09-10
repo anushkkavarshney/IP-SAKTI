@@ -1,3 +1,13 @@
 venv/
+.venv/
+env/
 __pycache__/
+*.pyc
 .DS_Store
+.pytest_cache/
+backend/*.db
+backend/*.sqlite3
+.cache/
+*.log
+.vscode/
+Thumbs.db
