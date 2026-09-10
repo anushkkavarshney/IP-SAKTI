@@ -1,0 +1,11 @@
+# Member 2's backend depends on the packages already listed in the repo
+# root requirements.txt (fastapi, pydantic, uvicorn, plus the ML libraries
+# rag_engine/ and verification/ need: sentence-transformers, rank-bm25,
+# torch, transformers, pymupdf, numpy, scikit-learn).
+#
+# Install from the repo root, not from here:
+#   pip install -r requirements.txt
+#
+# This file only lists backend-specific additions, if any are ever needed
+# (currently none -- everything backend imports is already covered above).
+-r ../requirements.txt
