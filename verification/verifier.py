@@ -23,7 +23,7 @@ from typing import Any
 
 from sentence_transformers import SentenceTransformer, util
 
-from schemas import (
+from .schemas import (
     FLAG_EMPTY_CLAIM,
     FLAG_NO_EVIDENCE,
     FLAG_JURISDICTION_MISMATCH,
@@ -35,7 +35,7 @@ from schemas import (
     normalize_evidence_payload,
     wrap_verification_payload,
 )
-from test_cases import TEST_CASES
+from .test_cases import TEST_CASES
 
 # Lightweight MVP model: fast, small, good enough for semantic matching.
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"

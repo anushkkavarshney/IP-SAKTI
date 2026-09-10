@@ -8,11 +8,11 @@ and executed seamlessly as a Python package from external modules.
 import os
 import sys
 
-# Ensure parent root directory is in sys.path for importability testing
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure project root is in sys.path for package import
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from verifier import verify_claims, verify_claims_batch
-from schemas import (
+from verification import verify_claims, verify_claims_batch
+from verification.schemas import (
     STATUS_SUPPORTED,
     STATUS_UNSUPPORTED,
     DEFAULT_JURISDICTION,

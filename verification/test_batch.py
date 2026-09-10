@@ -17,8 +17,8 @@ Verifies:
 import json
 from typing import Any
 
-from verifier import verify_claims_batch
-from schemas import (
+from verification import verify_claims_batch
+from verification.schemas import (
     STATUS_SUPPORTED,
     STATUS_PARTIAL,
     STATUS_UNSUPPORTED,

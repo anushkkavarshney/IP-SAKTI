@@ -20,10 +20,10 @@ import os
 import sys
 from typing import Any
 
-# Ensure verifier and schemas can be imported when running pytest from any working directory
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure project root is in sys.path for package import
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from schemas import (
+from verification.schemas import (
     STATUS_SUPPORTED,
     STATUS_PARTIAL,
     STATUS_UNSUPPORTED,
@@ -31,7 +31,7 @@ from schemas import (
     FLAG_EMPTY_CLAIM,
     FLAG_JURISDICTION_MISMATCH,
 )
-from verifier import verify_claim, verify_claims_batch, load_model
+from verification import verify_claim, verify_claims_batch, load_model
 
 
 # Load model once for all tests

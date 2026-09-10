@@ -4,7 +4,7 @@ IP-SAKTI Navigator — Member 5 (Verification + Confidence) Package.
 Public entry points for claim-to-evidence verification.
 """
 
-from verifier import (
+from .verifier import (
     verify_claims,
     verify_claims_batch,
     verify_claim,
@@ -15,7 +15,7 @@ from verifier import (
     DEFAULT_TOP_K,
 )
 
-from schemas import (
+from .schemas import (
     normalize_claims_payload,
     normalize_evidence_payload,
     normalize_claim,
