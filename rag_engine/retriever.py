@@ -7,7 +7,7 @@ class LegalRetriever:
 
     def get_relevant_context(self, query: str, jurisdiction: str = "India", top_k: int = 3) -> list:
         raw_results = self.engine.hybrid_search(query=query, jurisdiction=jurisdiction, top_k=top_k)
-        
+
         formatted_chunks = []
         for res in raw_results:
             formatted_chunks.append({
@@ -15,8 +15,11 @@ class LegalRetriever:
                 "act_name": res.get("act_name"),
                 "section": res.get("section"),
                 "as_of_date": res.get("as_of_date"),
+                "effective_date": res.get("effective_date"),
                 "jurisdiction": res.get("jurisdiction"),
                 "category": res.get("category"),
+                "authority": res.get("authority"),
+                "source_url": res.get("source_url"),
                 "content": res.get("content")
             })
         return formatted_chunks
