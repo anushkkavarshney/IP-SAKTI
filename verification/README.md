@@ -19,7 +19,8 @@ Claim
    → Best evidence
    → Preliminary semantic support status
    → Flags (NO_EVIDENCE, EMPTY_CLAIM, JURISDICTION_MISMATCH,
-            UNKNOWN_CITATION, LONG_CLAIM, MODEL_ERROR)
+            UNKNOWN_CITATION, UNKNOWN_CITATION_REFERENCE,
+            LONG_CLAIM, MODEL_ERROR)
    ↓
 Confidence engine (0–100) + safe abstention decision
 ```
@@ -40,11 +41,60 @@ scale for both the overall score and each signal:
 | Signal              | Weight | Meaning                                              |
 |---------------------|--------|------------------------------------------------------|
 | `retrieval_quality` | 0.30   | How much evidence was provided (≤ 6 items → 100)     |
-| `source_authority`  | 0.25   | Best-evidence authority from the known list          |
+| `source_authority`  | 0.25   | Best-evidence authority score (see below)            |
 | `claim_support`     | 0.25   | Share of claims supported / partially supported      |
 | `jurisdiction_match`| 0.20   | Share of claims whose best evidence matches jurisdiction |
 
 Levels: **HIGH = 80–100**, **MEDIUM = 50–79**, **LOW < 50**.
+
+### Source authority scoring (honest, conservative)
+
+| Authority value                                      | Score |
+|------------------------------------------------------|-------|
+| On the known-authority list (IPO, NBA, CDSCO, ...)   | 100   |
+| Present but not on the known list (real-looking)     | 40    |
+| Missing / `None` / empty                             | 0     |
+| Placeholder ("Not provided by the legal corpus yet", "unknown", "unavailable") | 0 |
+
+A placeholder carries **no information**, so it earns **no credit** — unknown
+authority ≠ 40 points. A real-looking but unrecognized authority gets a
+conservative 40: it is not assumed fake, and it is not treated as verified.
+
+## Claim-declared citations (`evidence_ids`)
+
+M3 may attach explicit evidence citations to a claim:
+
+```json
+{
+  "claim_id": "C1",
+  "text": "A new extraction process may warrant patentability review.",
+  "claim_type": "IP",
+  "jurisdiction": "India",
+  "evidence_ids": ["E1", "E2"]
+}
+```
+
+M5 **preserves** `evidence_ids` and **validates** every declared id against
+the evidence set actually supplied to M5:
+
+- id found in the supplied evidence → listed in `valid_citation_ids`;
+- id **not** found → listed in `unknown_citation_ids` and the claim is flagged
+  with `UNKNOWN_CITATION_REFERENCE`.
+
+Citation identity and semantic similarity are **separate concepts**: a fake
+evidence id is never made valid because another passage happens to score high.
+These fields are present on every claim result:
+
+```json
+{
+  "declared_evidence_ids": ["E1", "fake_e3"],
+  "valid_citation_ids": ["E1"],
+  "unknown_citation_ids": ["fake_e3"]
+}
+```
+
+Claims without `evidence_ids` (or with `[]` / `None`) are verified
+semantically as before — no fabricated-citation flag is forced.
 
 ## Safe abstention (M5-owned)
 
@@ -52,8 +102,9 @@ Levels: **HIGH = 80–100**, **MEDIUM = 50–79**, **LOW < 50**.
 - no evidence provided → abstain;
 - confidence below the safe-decision threshold (default 30) → abstain;
 - no claims → abstain;
-- an unrecognized citation on the best evidence lowers the score and triggers
-  a withholding warning.
+- a citation-integrity flag (`UNKNOWN_CITATION` on an unrecognized best-evidence
+  authority, or `UNKNOWN_CITATION_REFERENCE` for a fabricated/stale evidence id)
+  withholds the analysis pending verification.
 
 Unsupported claims are **flagged, never presented as fact**.
 
@@ -131,6 +182,8 @@ from verification import (
     verify_claim,          # single-claim verification
     calculate_confidence,  # 0–100 confidence engine
     calculate_abstention,  # safe abstention decision
+    normalize_evidence_ids,# normalize a claim's declared citation ids
+    split_citation_ids,    # split declared ids into (valid, unknown)
 )
 ```
 
@@ -153,6 +206,9 @@ from verification import (
       "best_evidence": { "...": "..." },
       "ranked_evidence": [ "...": "..." ],
       "jurisdiction_match": true,
+      "declared_evidence_ids": ["E1"],
+      "valid_citation_ids": ["E1"],
+      "unknown_citation_ids": [],
       "flags": []
     }
   ],
@@ -203,6 +259,13 @@ M3 Generated Claims  →  M5 Verification Module  ←  M4 Retrieved Legal Eviden
 ```
 
 ### M4 → M5 (Evidence Payload)
+
+Two evidence shapes are supported; both normalize to the same canonical fields
+(`id`, `document`, `section`, `text`, `legal_domain`, `authority`,
+`effective_date`, `as_of_date`, `source_url`, `jurisdiction`, `source`).
+
+**Backend-normalized shape** (`id` / `text` / `document_name` / `legal_domain`):
+
 ```json
 {
   "jurisdiction": "India",
@@ -222,15 +285,50 @@ M3 Generated Claims  →  M5 Verification Module  ←  M4 Retrieved Legal Eviden
 }
 ```
 
-### Backwards Compatibility & Field Aliasing
+**Native / raw M4 shape** (`doc_id` / `act_name` / `content` / `category`
+/ `as_of_date`) — accepted directly, no upstream adapter required:
+
+```json
+{
+  "jurisdiction": "India",
+  "evidence": [
+    {
+      "doc_id": "patent_act_1970",
+      "act_name": "The Patents Act, 1970",
+      "section": "Section 3",
+      "as_of_date": "2026-01-01",
+      "effective_date": "2026-01-01",
+      "jurisdiction": "India",
+      "category": "Patent",
+      "authority": "Indian Patent Office",
+      "source_url": "https://ipindia.gov.in/",
+      "content": "An invention may not be a patentable invention if it is a mere discovery of a scientific principle..."
+    }
+  ]
+}
+```
+
+### Field aliasing (both shapes accepted)
+
 The schema normalizers in `schemas.py` automatically adapt:
-- Claim ID: accepts both `id` and `claim_id`
-- Evidence ID: accepts both `id` and `evidence_id`
-- Source URL: accepts both `source` and `source_url`
-- Document Name: accepts both `document` and `document_name`
-- Input format: accepts string claims / bare lists (Day 1 format) as well as
-  full JSON payloads, and is **None / malformed-safe** for both claims and
-  evidence.
+
+| Canonical      | Accepted aliases                              |
+|----------------|-----------------------------------------------|
+| `id`           | `id`, `evidence_id`, `doc_id`                 |
+| `document`     | `document`, `document_name`, `act_name`       |
+| `text`         | `text`, `content`                             |
+| `legal_domain` | `legal_domain`, `category`                    |
+| `source_url`   | `source_url`, `source`                        |
+| `authority`    | `authority`                                   |
+| `section`      | `section`                                     |
+| `as_of_date`   | `as_of_date`                                  |
+| `effective_date` | `effective_date`                            |
+| `jurisdiction` | `jurisdiction`                                |
+
+Minimal evidence records (just `id` + `text`) and Day-1 `source`-based records
+also work. Inputs may be a full payload (`{"evidence": [...]}`) or a bare list,
+and are **None / malformed-safe**. Metadata is never invented — missing values
+stay empty.
 
 ## Batch verification engine
 
@@ -246,7 +344,9 @@ batch verification.
 - **Evidence Deduplication**: Filters duplicate evidence passages by ID or text.
 - **Jurisdiction Safety**: Flags jurisdiction mismatches
   (`JURISDICTION_MISMATCH`).
-- **Citation Safety**: Flags unrecognized authorities (`UNKNOWN_CITATION`).
+- **Citation Safety**: Flags unrecognized authorities (`UNKNOWN_CITATION`) and
+  fabricated / stale claim-declared evidence references
+  (`UNKNOWN_CITATION_REFERENCE`), never presenting a fake id as valid.
 - **Long-claim awareness**: Marks overlength claims (`LONG_CLAIM`).
 - **Defensive failures**: Model/embedding errors produce structured
   `MODEL_ERROR` results instead of crashing.
@@ -259,23 +359,28 @@ batch verification.
 - `verification/tests/test_m5_full.py` — 32 mandatory M5 tests (confidence,
   abstention, citation safety, normalization hardening, dedup, long claims,
   model errors, M4 alias compatibility, evidence link integrity).
+- `verification/tests/test_m5_citations_and_m4_vocab.py` — raw M4 evidence
+  vocabulary, `evidence_ids` preservation, fabricated-citation validation,
+  honest authority scoring, raw-M4 end-to-end (21 tests).
 
 ```bash
 python -m pytest verification/tests -q
 ```
+
+Expected: **78 passed** (57 original + 21 new).
 
 ## Package layout
 
 ```
 verification/
   __init__.py      public API exports
-  schemas.py       normalization + flags + claim extraction
-  verifier.py      embedding, ranking, batch verification
-  confidence.py    confidence engine + safe abstention
+  schemas.py       normalization + flags + claim extraction + citation split
+  verifier.py      embedding, ranking, batch verification + citation validation
+  confidence.py    confidence engine + safe abstention + authority scoring
   test_cases.py    synthetic Day-1 cases (13)
   test_batch.py    batch scenario runner (10)
   examples/integration_example.py   M3→M5→M4 demo
-  tests/           pytest suite (12 + 8 + 32)
+  tests/           pytest suite (12 + 8 + 32 + 21)
 ```
 
 Run the integration example from the repo root:

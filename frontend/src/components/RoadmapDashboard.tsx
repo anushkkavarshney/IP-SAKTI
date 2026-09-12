@@ -6,23 +6,19 @@ import ConfidenceCard from "./ConfidenceCard";
 import ClaimVerificationTable from "./ClaimVerificationTable";
 import EvidenceDrawer from "./EvidenceDrawer";
 import {
-  Sparkles,
   Scale,
   Leaf,
-  FileCheck2,
   AlertTriangle,
-  ArrowRight,
   Download,
   RotateCcw,
   CheckCircle2,
   Building2,
   BookOpen,
   UserCheck,
-  Share2,
   Printer,
   ShieldCheck,
-  Info,
 } from "lucide-react";
+import { SampleDataBanner, LiveResultChip } from "./DataSourceBanner";
 
 interface RoadmapDashboardProps {
   roadmap: FinalRoadmapResponse;
@@ -74,19 +70,11 @@ export default function RoadmapDashboard({
 
   return (
     <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-8 print:p-0 print:space-y-4">
-      {/* Top Notice Banner: Explicit Sample Data & Demo Environment Indicator */}
-      {isSampleData && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50/90 p-3.5 sm:px-5 dark:border-amber-900/60 dark:bg-amber-950/40 text-xs text-amber-950 dark:text-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-2xs print:hidden">
-          <div className="flex items-center gap-2">
-            <Info className="h-4 w-4 text-amber-600 shrink-0" />
-            <span>
-              <strong>Illustrative Output — Sample Data (Standalone Demo Mode):</strong> Results below illustrate the exact output contract for this scenario. Full end-to-end live model generation activates upon connecting Member 2&apos;s FastAPI backend.
-            </span>
-          </div>
-          <span className="rounded-md bg-amber-200/80 px-2 py-0.5 text-[10px] font-bold text-amber-900 dark:bg-amber-900 dark:text-amber-200 shrink-0 self-start sm:self-auto">
-            Section 33 Contract
-          </span>
-        </div>
+      {/* Top Notice: Sample vs Live result — never conflated */}
+      {isSampleData ? (
+        <SampleDataBanner className="print:hidden" />
+      ) : (
+        <LiveResultChip className="print:hidden" />
       )}
 
       {/* Top Action Header */}

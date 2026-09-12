@@ -32,6 +32,7 @@ FLAG_NO_EVIDENCE = "NO_EVIDENCE"
 FLAG_EMPTY_CLAIM = "EMPTY_CLAIM"
 FLAG_JURISDICTION_MISMATCH = "JURISDICTION_MISMATCH"
 FLAG_UNKNOWN_CITATION = "UNKNOWN_CITATION"
+FLAG_UNKNOWN_CITATION_REFERENCE = "UNKNOWN_CITATION_REFERENCE"
 FLAG_EMPTY_EVIDENCE_PASSAGE = "EMPTY_EVIDENCE_PASSAGE"
 FLAG_LONG_CLAIM = "LONG_CLAIM"
 FLAG_MODEL_ERROR = "MODEL_ERROR"
@@ -170,6 +171,31 @@ def extract_claims(
     return {"jurisdiction": default_jurisdiction, "claims": out_claims}
 
 
+def normalize_evidence_ids(value: Any) -> list[str]:
+    """Normalize a claim's declared `evidence_ids` into a clean, de-duplicated
+    list of non-empty id strings.
+
+    Accepts None, a single id string, or an iterable of ids. Never raises.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items: list[Any] = [value]
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        raw_items = list(value)
+    else:
+        return []
+
+    out: list[str] = []
+    for raw in raw_items:
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
 def normalize_claim(
     claim: str | dict[str, Any],
     *,
@@ -181,24 +207,33 @@ def normalize_claim(
     None-safe: any non-dict/non-string input returns an empty-text placeholder.
 
     M3 may send `id` (roadmap) or `claim_id` (alias).
+    Claim-level `claim_type` and `evidence_ids` (explicit citations) are
+    preserved so that downstream citation validation can detect fabricated
+    or stale evidence references.
     """
     if claim is None:
         return {
             "id": default_id,
             "text": "",
             "jurisdiction": normalize_jurisdiction(default_jurisdiction),
+            "claim_type": "",
+            "evidence_ids": [],
         }
     if isinstance(claim, str):
         return {
             "id": default_id,
             "text": claim.strip(),
             "jurisdiction": normalize_jurisdiction(default_jurisdiction),
+            "claim_type": "",
+            "evidence_ids": [],
         }
     if not isinstance(claim, dict):
         return {
             "id": default_id,
             "text": "",
             "jurisdiction": normalize_jurisdiction(default_jurisdiction),
+            "claim_type": "",
+            "evidence_ids": [],
         }
 
     payload_jurisdiction = normalize_jurisdiction(
@@ -209,6 +244,8 @@ def normalize_claim(
         "id": _first_present(claim, ["id", "claim_id"], default_id),
         "text": str(claim.get("text") or "").strip(),
         "jurisdiction": payload_jurisdiction,
+        "claim_type": str(claim.get("claim_type") or "").strip(),
+        "evidence_ids": normalize_evidence_ids(claim.get("evidence_ids")),
     }
 
 
@@ -244,8 +281,21 @@ def normalize_evidence_item(
     default_jurisdiction: str = DEFAULT_JURISDICTION,
 ) -> dict[str, Any]:
     """
-    Accept Day 1 evidence (`source`) and M4 evidence (`source_url`, `id`).
-    None/malformed-safe.  Keep original extra keys.
+    Normalize evidence from ANY upstream shape into the canonical M5 shape.
+
+    Supported field aliases (both are always accepted):
+      id  <- `id` | `evidence_id` | `doc_id`
+      document <- `document` | `document_name` | `act_name`
+      text <- `text` | `content`
+      source_url <- `source_url` | `source`
+      legal_domain  <- `legal_domain` | `category`
+      section / authority / as_of_date / effective_date / jurisdiction
+
+    This makes raw Member 4 corpus chunks (doc_id / act_name / section /
+    as_of_date / category / authority / source_url / content) consumable
+    directly, as well as the backend-normalized shape (id / document_name /
+    text / legal_domain / ...). None/malformed-safe. Original extra keys are
+    preserved and never invented.
     """
     if item is None or not isinstance(item, dict):
         return {
@@ -259,24 +309,30 @@ def normalize_evidence_item(
             "legal_domain": "",
             "authority": "",
             "effective_date": "",
+            "as_of_date": "",
         }
 
     normalized = deepcopy(item)
     source_url = _first_present(item, ["source_url", "source"])
-    document = _first_present(item, ["document", "document_name"])
+    document = _first_present(item, ["document", "document_name", "act_name"])
+    legal_domain = _first_present(item, ["legal_domain", "category"])
     jurisdiction = normalize_jurisdiction(item.get("jurisdiction"), default_jurisdiction)
+    raw_text = item.get("text")
+    if raw_text is None:
+        raw_text = item.get("content")
 
-    normalized["id"] = _first_present(item, ["id", "evidence_id"], default_id)
-    normalized["text"] = str(item.get("text") or "").strip()
+    normalized["id"] = _first_present(item, ["id", "evidence_id", "doc_id"], default_id)
+    normalized["text"] = str(raw_text or "").strip()
     normalized["document"] = document
     normalized["section"] = str(item.get("section") or "").strip()
     normalized["jurisdiction"] = jurisdiction
     normalized["source_url"] = source_url
     if not normalized.get("source"):
         normalized["source"] = source_url
-    normalized.setdefault("legal_domain", item.get("legal_domain") or "")
-    normalized.setdefault("authority", item.get("authority") or "")
-    normalized.setdefault("effective_date", item.get("effective_date") or "")
+    normalized["legal_domain"] = legal_domain
+    normalized["authority"] = str(item.get("authority") or "").strip()
+    normalized["effective_date"] = str(item.get("effective_date") or "").strip()
+    normalized["as_of_date"] = str(item.get("as_of_date") or "").strip()
     return normalized
 
 
@@ -323,6 +379,24 @@ def unknown_citation_flag_for(authority: str) -> str | None:
     if not authority:
         return None
     return None if _is_known_authority(authority) else FLAG_UNKNOWN_CITATION
+
+
+def split_citation_ids(
+    declared: list[str],
+    valid_evidence_ids: set[str] | list[str],
+) -> tuple[list[str], list[str]]:
+    """Separate a claim's declared evidence ids into (valid, unknown).
+
+    Citation identity is completely separate from semantic similarity: an
+    id is only "valid" when it matches an evidence record actually supplied
+    to M5. Unknown ids are never made valid by semantic overlap.
+    """
+    valid_set = {str(eid).strip() for eid in (valid_evidence_ids or []) if str(eid).strip()}
+    valid: list[str] = []
+    unknown: list[str] = []
+    for eid in normalize_evidence_ids(declared):
+        (valid if eid in valid_set else unknown).append(eid)
+    return valid, unknown
 
 
 def empty_claim_result(

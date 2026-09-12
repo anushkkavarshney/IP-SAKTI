@@ -2,13 +2,11 @@
 
 import React, { useState } from "react";
 import {
-  Sparkles,
   ArrowRight,
   HelpCircle,
   AlertCircle,
   Info,
   CheckCircle2,
-  Lock,
 } from "lucide-react";
 import { PresetScenarioId } from "../types/roadmap";
 
@@ -65,8 +63,10 @@ export default function InnovationInput({
   React.useEffect(() => {
     if (!description) {
       const match = presets.find((p) => p.id === selectedPreset);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time preset sync on mount
       if (match) setDescription(match.desc);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount with default props only
   }, []);
 
   const handlePresetSelect = (preset: typeof presets[0]) => {
@@ -112,15 +112,19 @@ export default function InnovationInput({
           </div>
         </div>
 
-        {/* Informative Standalone Mode / Custom Input Notice */}
+        {/* Informative Service Mode Notice */}
         <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50/80 p-4 dark:border-sky-900/60 dark:bg-sky-950/40 text-xs text-sky-950 dark:text-sky-200 flex items-start gap-3">
           <Info className="h-4 w-4 text-sky-600 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <span className="font-semibold block">
-              Demo Environment Notice:
+              Live service, with a safe fallback:
             </span>
             <p className="text-[11px] text-sky-900 dark:text-sky-300 leading-relaxed">
-              Custom open-ended free text analysis will be fully dynamically reasoned once Member 2&apos;s FastAPI backend is connected. In current <strong>Standalone / Demo Mode</strong>, please select one of the three verified test scenarios below to see full statutory citations and claim verification in action.
+              Custom free-text input is analyzed by the IP-SAKTI analysis
+              service when it&apos;s running. If the service can&apos;t be reached, you
+              can continue with one of the three verified demo scenarios below,
+              or use sample data from the error screen — every sample result is
+              clearly marked as illustrative.
             </p>
           </div>
         </div>

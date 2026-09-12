@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { VerificationSummary, ClaimVerificationItem } from "../types/roadmap";
+import { VerificationSummary } from "../types/roadmap";
 import { formatVerificationStatus } from "../lib/utils";
 import {
   ShieldCheck,
@@ -11,7 +11,6 @@ import {
   FileSearch,
   ChevronDown,
   ChevronUp,
-  Info,
 } from "lucide-react";
 
 interface ClaimVerificationTableProps {
@@ -22,7 +21,6 @@ export default function ClaimVerificationTable({
   verification,
 }: ClaimVerificationTableProps) {
   const {
-    total_claims,
     supported_claims,
     partially_supported_claims,
     unsupported_claims,
@@ -76,15 +74,15 @@ export default function ClaimVerificationTable({
 
       {/* Unsupported Claims Alert Callout if present */}
       {unsupported_claims.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50/70 p-4 text-xs text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50/70 p-4 text-xs text-rose-900 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
           <div className="flex items-start gap-2.5">
             <XCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
             <div>
               <strong className="font-semibold block mb-1">
-                Caution: {unsupported_claims.length} Claim(s) Lack Legal Grounding
+                {unsupported_claims.length} Claim(s) Unsupported by Retrieved Evidence
               </strong>
               <p className="mb-2 text-[11px] text-rose-800 dark:text-rose-300">
-                In adherence with Rule 3 and Rule 4, unsupported statements are quarantined and flagged:
+                These claims could not be verified against the retrieved statutory sources. This does not mean the claims are false or unlawful — only that the available evidence could not confirm them. Under Rules 3 and 4, they are quarantined rather than accepted.
               </p>
               <ul className="list-disc pl-4 space-y-1 text-[11px]">
                 {unsupported_claims.map((claim, idx) => (

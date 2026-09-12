@@ -44,10 +44,35 @@ export function formatVerificationStatus(status: "supported" | "partially_suppor
       };
     case "unsupported":
       return {
-        label: "Unsupported / Flagged",
+        label: "Unsupported by Retrieved Evidence",
         badge: "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/50 dark:text-rose-200 dark:border-rose-700",
         icon: "XCircle",
       };
   }
+}
+
+export function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return iso;
+  }
+}
+
+export function truncate(text: string, maxLength = 64): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLength) return clean;
+  return clean.slice(0, maxLength - 1).trimEnd() + "…";
+}
+
+export function timeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
 }
 

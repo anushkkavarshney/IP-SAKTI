@@ -6,8 +6,6 @@ import { formatConfidenceLevel } from "../lib/utils";
 import {
   Cpu,
   ShieldCheck,
-  AlertTriangle,
-  HelpCircle,
   CheckCircle2,
   FileCheck2,
   Scale,
@@ -26,19 +24,19 @@ export default function ConfidenceCard({
   const { score, level, signals } = confidence;
   const config = formatConfidenceLevel(level);
 
-  // Defaults from Section 21 of roadmap.md
-  const defaultSignals = signals || {
-    retrieval_quality: Math.round(score * 1.05),
-    source_authority: Math.round(score * 1.02),
-    claim_support: Math.round(score * 0.95),
-    jurisdiction_match: 100,
+  const hasSignals = !!signals;
+
+  const signalsInView = signals ?? {
+    retrieval_quality: 0,
+    source_authority: 0,
+    claim_support: 0,
+    jurisdiction_match: 0,
   };
 
-  // Calculate formula components
-  const retrievalContrib = ((defaultSignals.retrieval_quality * 0.30)).toFixed(1);
-  const authorityContrib = ((defaultSignals.source_authority * 0.25)).toFixed(1);
-  const claimContrib = ((defaultSignals.claim_support * 0.25)).toFixed(1);
-  const jurisdictionContrib = ((defaultSignals.jurisdiction_match * 0.20)).toFixed(1);
+  const retrievalContrib = ((signalsInView.retrieval_quality * 0.30)).toFixed(1);
+  const authorityContrib = ((signalsInView.source_authority * 0.25)).toFixed(1);
+  const claimContrib = ((signalsInView.claim_support * 0.25)).toFixed(1);
+  const jurisdictionContrib = ((signalsInView.jurisdiction_match * 0.20)).toFixed(1);
 
   return (
     <div className="rounded-3xl border border-stone-200 bg-white p-6 sm:p-8 shadow-sm dark:border-stone-800 dark:bg-stone-900">
@@ -77,6 +75,15 @@ export default function ConfidenceCard({
 
       {/* Visual Hierarchy: 4 Weighted Sub-Metrics (Ordered 30% > 25% > 25% > 20%) */}
       <div className="mt-6 space-y-4">
+        {!hasSignals && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            The analysis service did not return sub-signal breakdowns for this
+            run. The overall score is still shown, but the per-signal bars below
+            reflect the numeric model, not the individual contributing weights.
+            Exercise extra caution and review escalation questions before relying
+            on this result.
+          </div>
+        )}
         {/* Tier 1 (Hero Metric): Retrieval Quality — 30% Weight */}
         <div className="rounded-2xl border-2 border-amber-300/80 bg-amber-50/40 p-4 sm:p-5 dark:border-amber-700/60 dark:bg-amber-950/20">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -100,9 +107,9 @@ export default function ConfidenceCard({
             </div>
 
             <div className="text-right sm:shrink-0">
-              <span className="text-xl font-extrabold text-amber-700 dark:text-amber-400">
-                {defaultSignals.retrieval_quality}%
-              </span>
+                <span className="text-xl font-extrabold text-amber-700 dark:text-amber-400">
+                  {hasSignals ? `${signalsInView.retrieval_quality}%` : "—"}
+                </span>
               <div className="text-[10px] text-stone-500 font-medium">
                 Contributes +{retrievalContrib} pts
               </div>
@@ -112,7 +119,7 @@ export default function ConfidenceCard({
           <div className="mt-3 h-2 w-full rounded-full bg-amber-200/60 overflow-hidden dark:bg-stone-700">
             <div
               className="h-full bg-amber-600 rounded-full transition-all duration-500"
-              style={{ width: `${Math.min(100, defaultSignals.retrieval_quality)}%` }}
+              style={{ width: `${Math.min(100, signalsInView.retrieval_quality)}%` }}
             />
           </div>
         </div>
@@ -139,11 +146,11 @@ export default function ConfidenceCard({
               <div className="h-1.5 w-3/4 rounded-full bg-stone-200 overflow-hidden dark:bg-stone-700">
                 <div
                   className="h-full bg-emerald-600 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, defaultSignals.source_authority)}%` }}
+                  style={{ width: `${Math.min(100, signalsInView.source_authority)}%` }}
                 />
               </div>
               <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
-                {defaultSignals.source_authority}% (+{authorityContrib})
+                {signalsInView.source_authority}% (+{authorityContrib})
               </span>
             </div>
           </div>
@@ -168,11 +175,11 @@ export default function ConfidenceCard({
               <div className="h-1.5 w-3/4 rounded-full bg-stone-200 overflow-hidden dark:bg-stone-700">
                 <div
                   className="h-full bg-indigo-600 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, defaultSignals.claim_support)}%` }}
+                  style={{ width: `${Math.min(100, signalsInView.claim_support)}%` }}
                 />
               </div>
               <span className="text-xs font-bold text-indigo-700 dark:text-indigo-400">
-                {defaultSignals.claim_support}% (+{claimContrib})
+                {signalsInView.claim_support}% (+{claimContrib})
               </span>
             </div>
           </div>
@@ -193,13 +200,13 @@ export default function ConfidenceCard({
               </div>
             </div>
             <div className="text-right sm:shrink-0 text-xs font-bold text-teal-700 dark:text-teal-400">
-              {defaultSignals.jurisdiction_match}% (+{jurisdictionContrib} pts)
+              {signalsInView.jurisdiction_match}% (+{jurisdictionContrib} pts)
             </div>
           </div>
           <div className="mt-2 h-1.5 w-full rounded-full bg-stone-200 overflow-hidden dark:bg-stone-700">
             <div
               className="h-full bg-teal-600 rounded-full transition-all duration-500"
-              style={{ width: `${Math.min(100, defaultSignals.jurisdiction_match)}%` }}
+              style={{ width: `${Math.min(100, signalsInView.jurisdiction_match)}%` }}
             />
           </div>
         </div>
@@ -210,7 +217,7 @@ export default function ConfidenceCard({
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
           <span>
-            <strong>Formula (Section 21):</strong> Score = (0.30 × {defaultSignals.retrieval_quality}) + (0.25 × {defaultSignals.source_authority}) + (0.25 × {defaultSignals.claim_support}) + (0.20 × {defaultSignals.jurisdiction_match}) = <strong>{score}/100</strong>
+            <strong>Formula (Section 21):</strong> Score = (0.30 × {signalsInView.retrieval_quality}) + (0.25 × {signalsInView.source_authority}) + (0.25 × {signalsInView.claim_support}) + (0.20 × {signalsInView.jurisdiction_match}) = <strong>{score}/100</strong>
           </span>
         </div>
         {abstain && (

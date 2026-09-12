@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AppProviders } from "../lib/providers";
+import { themeInitScript } from "../lib/theme";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,9 +15,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "IP-SAKTI Navigator | Ayurvedic IP & Regulatory Commercialization Engine",
+  title: "IP-SAKTI Navigator | Ayurvedic IP & Regulatory Roadmaps",
   description:
-    "Decision-support platform for Ayurvedic innovators converting plain-language innovation descriptions into evidence-backed IP, ABS (Biodiversity), and regulatory commercialization roadmaps.",
+    "Turn an Ayurvedic innovation into an evidence-backed IP and regulatory roadmap. Decision-support for the Smart India Hackathon 2026, problem statement SIH26045.",
 };
 
 export default function RootLayout({
@@ -26,9 +28,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

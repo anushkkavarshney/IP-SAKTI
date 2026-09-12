@@ -3,7 +3,6 @@
 import React, { useState } from "react";
 import { LegalEvidenceChunk } from "../types/roadmap";
 import {
-  FileText,
   ExternalLink,
   BookOpen,
   Copy,
@@ -11,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   Bookmark,
+  SearchX,
 } from "lucide-react";
 
 interface EvidenceDrawerProps {
@@ -34,7 +34,19 @@ export default function EvidenceDrawer({
   };
 
   if (!evidenceList || evidenceList.length === 0) {
-    return null;
+    return (
+      <div className="rounded-2xl border border-dashed border-stone-300 bg-stone-50/60 p-6 text-center dark:border-stone-700 dark:bg-stone-900/40">
+        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-stone-100 text-stone-400 dark:bg-stone-800 dark:text-stone-500">
+          <SearchX className="h-5 w-5" />
+        </div>
+        <p className="mt-3 text-xs font-semibold text-stone-600 dark:text-stone-400">
+          No statutory citations were retrieved for this section.
+        </p>
+        <p className="mt-1 text-[11px] text-stone-500 dark:text-stone-500">
+          This can happen when the analysis service has no matching statute in the curated corpus, or when abstention was triggered before evidence retrieval.
+        </p>
+      </div>
+    );
   }
 
   // Generate preview line of cited sections

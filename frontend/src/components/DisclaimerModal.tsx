@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import { useEffect, useRef } from "react";
 import { AlertTriangle, ShieldCheck, X, CheckCircle2 } from "lucide-react";
 
 interface DisclaimerModalProps {
@@ -12,12 +12,33 @@ export default function DisclaimerModal({
   isOpen,
   onClose,
 }: DisclaimerModalProps) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    closeRef.current?.focus();
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl rounded-2xl border border-stone-200 bg-white p-6 shadow-2xl dark:border-stone-800 dark:bg-stone-900 max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-200"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="disclaimer-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-stone-200 bg-white p-6 shadow-2xl dark:border-stone-800 dark:bg-stone-900">
         <button
+          ref={closeRef}
           onClick={onClose}
           className="absolute right-4 top-4 rounded-full p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
           aria-label="Close modal"
@@ -30,7 +51,10 @@ export default function DisclaimerModal({
             <ShieldCheck className="h-6 w-6" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-stone-900 dark:text-stone-100">
+            <h3
+              id="disclaimer-title"
+              className="text-lg font-bold text-stone-900 dark:text-stone-100"
+            >
               Regulatory & Legal Disclaimer
             </h3>
             <p className="text-xs text-stone-500 dark:text-stone-400">
@@ -77,7 +101,7 @@ export default function DisclaimerModal({
             <div className="flex items-start gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
               <span>
-                <strong>India-First Jurisdiction (Rule 13):</strong> The current 5-day MVP exclusively evaluates Indian legal authorities. International patent systems (USPTO, EPO) and foreign regulations are intentionally separated.
+                <strong>India-First Jurisdiction (Rule 13):</strong> The current MVP exclusively evaluates Indian legal authorities. International patent systems (USPTO, EPO) and foreign regulations are intentionally out of scope.
               </span>
             </div>
 
@@ -102,4 +126,3 @@ export default function DisclaimerModal({
     </div>
   );
 }
-

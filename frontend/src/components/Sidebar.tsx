@@ -1,46 +1,58 @@
 "use client";
 
-import React from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import {
   Scale,
+  Home,
   Sparkles,
-  BookOpen,
-  ShieldAlert,
+  FileText,
+  Settings,
+  Info,
+  ShieldCheck,
+  LogOut,
+  X,
+  ChevronRight,
+  Cpu,
   Leaf,
   Building2,
   FileCheck2,
-  Cpu,
   UserCheck,
-  RotateCcw,
-  ExternalLink,
-  ShieldCheck,
-  X,
-  Layers,
-  ChevronRight,
+  CircleUser,
 } from "lucide-react";
-import { PresetScenarioId } from "../types/roadmap";
+import { useAuth } from "../lib/auth";
 
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
-  currentStep: "input" | "clarifying" | "loading" | "dashboard";
-  activePreset?: PresetScenarioId;
-  onSelectPreset: (presetId: PresetScenarioId) => void;
-  onNewAnalysis: () => void;
   onOpenDisclaimer: () => void;
-  hasActiveRoadmap: boolean;
 }
 
-export default function Sidebar({
-  isOpen,
-  onClose,
-  currentStep,
-  activePreset = "ashwagandha",
-  onSelectPreset,
-  onNewAnalysis,
-  onOpenDisclaimer,
-  hasActiveRoadmap,
-}: SidebarProps) {
+const JUMP_LINKS = [
+  { id: "section-classification", label: "Classification & Reason", icon: Sparkles, color: "text-amber-600" },
+  { id: "section-confidence", label: "Confidence Gauge (30/25/25/20)", icon: Cpu, color: "text-emerald-600" },
+  { id: "section-ip", label: "IP & Section 3(p) TK", icon: Scale, color: "text-amber-600" },
+  { id: "section-abs", label: "Biodiversity / ABS (NBA)", icon: Leaf, color: "text-teal-600" },
+  { id: "section-regulatory", label: "AYUSH Regulatory Steps", icon: Building2, color: "text-indigo-600" },
+  { id: "section-verification", label: "Claim Verification Table", icon: FileCheck2, color: "text-emerald-600" },
+  { id: "section-escalation", label: "Counsel Escalation Brief", icon: UserCheck, color: "text-amber-600" },
+];
+
+export default function Sidebar({ isOpen, onClose, onOpenDisclaimer }: SidebarProps) {
+  const pathname = usePathname();
+  const { user, logout } = useAuth();
+  const [hasActiveRoadmap, setHasActiveRoadmap] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const params = new URLSearchParams(window.location.search);
+    const isDashboard =
+      pathname === "/assessment" && params.get("step") === "dashboard";
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reads window URL, must run client-side
+    setHasActiveRoadmap(isDashboard);
+  }, [isOpen, pathname]);
+
   const jumpToSection = (elementId: string) => {
     const el = document.getElementById(elementId);
     if (el) {
@@ -49,9 +61,17 @@ export default function Sidebar({
     }
   };
 
+  const navLink = (active: boolean) =>
+    `flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-xs font-semibold transition ${
+      active
+        ? "bg-amber-100/70 text-amber-950 dark:bg-amber-950/60 dark:text-amber-200"
+        : "text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
+    }`;
+
+  const isAssessment = pathname === "/assessment";
+
   return (
     <>
-      {/* Mobile Backdrop */}
       {isOpen && (
         <div
           onClick={onClose}
@@ -60,194 +80,96 @@ export default function Sidebar({
         />
       )}
 
-      {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-40 w-72 bg-white border-r border-stone-200 dark:bg-stone-900 dark:border-stone-800 flex flex-col transition-transform duration-300 ease-in-out ${
+        className={`fixed bottom-0 left-0 top-0 z-40 flex w-72 flex-col border-r border-stone-200 bg-white transition-transform duration-300 ease-in-out dark:border-stone-800 dark:bg-stone-900 ${
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
-        {/* Sidebar Header */}
-        <div className="flex h-16 items-center justify-between px-5 border-b border-stone-200 dark:border-stone-800">
-          <div className="flex items-center gap-2.5">
+        <div className="flex h-16 items-center justify-between border-b border-stone-200 px-5 dark:border-stone-800">
+          <Link href="/home" onClick={onClose} className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 text-white shadow-xs">
               <Scale className="h-5 w-5" />
             </div>
             <div>
-              <span className="text-sm font-bold text-stone-900 dark:text-white">
-                IP-SAKTI <span className="text-amber-600">Navigator</span>
+              <span className="block text-sm font-bold text-stone-900 dark:text-white">
+                IP-SAKTI <span className="text-amber-600 dark:text-amber-500">Navigator</span>
               </span>
               <p className="text-[10px] text-stone-500 dark:text-stone-400">
                 SIH 2026 · PS SIH26045
               </p>
             </div>
-          </div>
-
-          {/* Close button on mobile */}
+          </Link>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 dark:hover:bg-stone-800 dark:hover:text-stone-200 lg:hidden"
+            className="rounded-lg p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200 lg:hidden"
+            aria-label="Close navigation"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Demo Mode / Sample Data Pill */}
-        <div className="p-3 bg-stone-50/80 dark:bg-stone-950/60 border-b border-stone-200/80 dark:border-stone-800">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="flex items-center gap-1.5 font-semibold text-stone-700 dark:text-stone-300">
-              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-              Standalone Mode
-            </span>
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-900 dark:bg-amber-950 dark:text-amber-300">
-              Sample Data
-            </span>
-          </div>
-        </div>
+        <div className="flex-1 space-y-5 overflow-y-auto p-4">
+          <nav className="space-y-1">
+            <Link href="/home" onClick={onClose} className={navLink(pathname === "/home")}>
+              <Home className="h-4 w-4 shrink-0" />
+              <span>Home</span>
+            </Link>
+            <Link href="/assessment" onClick={onClose} className={navLink(isAssessment)}>
+              <Sparkles className="h-4 w-4 shrink-0" />
+              <span>New Assessment</span>
+            </Link>
+            <Link href="/reports" onClick={onClose} className={navLink(pathname === "/reports")}>
+              <FileText className="h-4 w-4 shrink-0" />
+              <span>My Assessments</span>
+            </Link>
+            <Link href="/settings" onClick={onClose} className={navLink(pathname === "/settings")}>
+              <Settings className="h-4 w-4 shrink-0" />
+              <span>Settings</span>
+            </Link>
+          </nav>
 
-        {/* Scrollable Nav Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
-          {/* Main Action: New Analysis */}
-          <div>
-            <button
-              onClick={() => {
-                onNewAnalysis();
-                onClose();
-              }}
-              className="w-full flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-4 py-2.5 text-xs font-semibold text-white shadow-sm hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-stone-200 transition"
+          <div className="border-t border-stone-200/70 pt-4 dark:border-stone-800">
+            <span className="mb-2 block px-1 text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-stone-500">
+              Learn
+            </span>
+            <Link
+              href="/how-it-works"
+              onClick={onClose}
+              className={navLink(pathname === "/how-it-works")}
             >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span>Start New Analysis</span>
-            </button>
+              <Info className="h-4 w-4 shrink-0" />
+              <span>How It Works</span>
+            </Link>
           </div>
 
-          {/* 3 Quick Demo Preset Scenarios */}
-          <div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-stone-500 block mb-2 px-1">
-              Verified Demo Presets
-            </span>
-            <div className="space-y-1.5">
-              <button
-                onClick={() => {
-                  onSelectPreset("ashwagandha");
-                  onClose();
-                }}
-                className={`w-full text-left rounded-xl px-3 py-2 text-xs transition flex items-center justify-between ${
-                  activePreset === "ashwagandha" && currentStep === "dashboard"
-                    ? "bg-amber-100/70 text-amber-950 font-bold dark:bg-amber-950/60 dark:text-amber-200"
-                    : "text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
-                }`}
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <Sparkles className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                  <span className="truncate">Ashwagandha Extract</span>
-                </div>
-                <ChevronRight className="h-3 w-3 opacity-40 shrink-0" />
-              </button>
-
-              <button
-                onClick={() => {
-                  onSelectPreset("triphala");
-                  onClose();
-                }}
-                className={`w-full text-left rounded-xl px-3 py-2 text-xs transition flex items-center justify-between ${
-                  activePreset === "triphala" && currentStep === "dashboard"
-                    ? "bg-emerald-100/70 text-emerald-950 font-bold dark:bg-emerald-950/60 dark:text-emerald-200"
-                    : "text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
-                }`}
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <BookOpen className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                  <span className="truncate">Classical Triphala Churna</span>
-                </div>
-                <ChevronRight className="h-3 w-3 opacity-40 shrink-0" />
-              </button>
-
-              <button
-                onClick={() => {
-                  onSelectPreset("abstention");
-                  onClose();
-                }}
-                className={`w-full text-left rounded-xl px-3 py-2 text-xs transition flex items-center justify-between ${
-                  activePreset === "abstention" && currentStep === "dashboard"
-                    ? "bg-rose-100/70 text-rose-950 font-bold dark:bg-rose-950/60 dark:text-rose-200"
-                    : "text-stone-700 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"
-                }`}
-              >
-                <div className="flex items-center gap-2 truncate">
-                  <ShieldAlert className="h-3.5 w-3.5 text-rose-600 shrink-0" />
-                  <span className="truncate">Safe Abstention Test</span>
-                </div>
-                <ChevronRight className="h-3 w-3 opacity-40 shrink-0" />
-              </button>
-            </div>
-          </div>
-
-          {/* Active Roadmap Section Jump Links (When viewing report) */}
           {hasActiveRoadmap && (
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-stone-500 block mb-2 px-1">
+            <div className="border-t border-stone-200/70 pt-4 dark:border-stone-800">
+              <span className="mb-2 block px-1 text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-stone-500">
                 Roadmap Navigation
               </span>
               <nav className="space-y-1 text-xs">
-                <button
-                  onClick={() => jumpToSection("section-classification")}
-                  className="w-full text-left rounded-lg px-2.5 py-1.5 text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800 flex items-center gap-2"
-                >
-                  <Sparkles className="h-3.5 w-3.5 text-amber-600" />
-                  <span>Classification &amp; Reason</span>
-                </button>
-                <button
-                  onClick={() => jumpToSection("section-confidence")}
-                  className="w-full text-left rounded-lg px-2.5 py-1.5 text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800 flex items-center gap-2"
-                >
-                  <Cpu className="h-3.5 w-3.5 text-emerald-600" />
-                  <span>Confidence Gauge (30/25/25/20)</span>
-                </button>
-                <button
-                  onClick={() => jumpToSection("section-ip")}
-                  className="w-full text-left rounded-lg px-2.5 py-1.5 text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800 flex items-center gap-2"
-                >
-                  <Scale className="h-3.5 w-3.5 text-amber-600" />
-                  <span>IP &amp; Section 3(p) TK</span>
-                </button>
-                <button
-                  onClick={() => jumpToSection("section-abs")}
-                  className="w-full text-left rounded-lg px-2.5 py-1.5 text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800 flex items-center gap-2"
-                >
-                  <Leaf className="h-3.5 w-3.5 text-teal-600" />
-                  <span>Biodiversity / ABS (NBA)</span>
-                </button>
-                <button
-                  onClick={() => jumpToSection("section-regulatory")}
-                  className="w-full text-left rounded-lg px-2.5 py-1.5 text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800 flex items-center gap-2"
-                >
-                  <Building2 className="h-3.5 w-3.5 text-indigo-600" />
-                  <span>AYUSH Regulatory Steps</span>
-                </button>
-                <button
-                  onClick={() => jumpToSection("section-verification")}
-                  className="w-full text-left rounded-lg px-2.5 py-1.5 text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800 flex items-center gap-2"
-                >
-                  <FileCheck2 className="h-3.5 w-3.5 text-emerald-600" />
-                  <span>Claim Verification Table</span>
-                </button>
-                <button
-                  onClick={() => jumpToSection("section-escalation")}
-                  className="w-full text-left rounded-lg px-2.5 py-1.5 text-stone-600 hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800 flex items-center gap-2"
-                >
-                  <UserCheck className="h-3.5 w-3.5 text-amber-600" />
-                  <span>Counsel Escalation Brief</span>
-                </button>
+                {JUMP_LINKS.map((link) => {
+                  const Icon = link.icon;
+                  return (
+                    <button
+                      key={link.id}
+                      onClick={() => jumpToSection(link.id)}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-stone-600 transition hover:bg-stone-100 dark:text-stone-400 dark:hover:bg-stone-800"
+                    >
+                      <Icon className={`h-3.5 w-3.5 ${link.color}`} />
+                      <span>{link.label}</span>
+                    </button>
+                  );
+                })}
               </nav>
             </div>
           )}
 
-          {/* Authoritative Knowledge Base Info */}
-          <div className="pt-2 border-t border-stone-200/60 dark:border-stone-800">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-stone-500 block mb-2 px-1">
+          <div className="border-t border-stone-200/70 pt-4 dark:border-stone-800">
+            <span className="mb-2 block px-1 text-[11px] font-bold uppercase tracking-wider text-stone-400 dark:text-stone-500">
               Indian Corpus Ingestion
             </span>
-            <div className="rounded-xl bg-stone-50 p-3 text-[10px] text-stone-600 dark:bg-stone-800/50 dark:text-stone-400 space-y-1 border border-stone-200/60 dark:border-stone-700/60">
+            <div className="space-y-1 rounded-xl border border-stone-200/60 bg-stone-50 p-3 text-[10px] text-stone-600 dark:border-stone-700/60 dark:bg-stone-800/50 dark:text-stone-400">
               <p>• The Patents Act, 1970 (IPO)</p>
               <p>• Biological Diversity Act, 2002 (NBA)</p>
               <p>• Drugs &amp; Cosmetics Rules, 1945 (AYUSH)</p>
@@ -256,24 +178,45 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* Sidebar Footer */}
-        <div className="p-4 border-t border-stone-200 dark:border-stone-800 space-y-2">
+        <div className="space-y-2 border-t border-stone-200 p-4 dark:border-stone-800">
           <button
             onClick={() => {
               onOpenDisclaimer();
               onClose();
             }}
-            className="w-full flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50/80 px-3 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-300"
+            className="flex w-full items-center gap-2 rounded-xl border border-stone-200 bg-stone-50/80 px-3 py-2 text-xs font-semibold text-stone-700 transition hover:bg-stone-100 dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-300"
           >
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-amber-600" />
-              <span>Legal Safety Notice</span>
-            </div>
-            <span className="text-[10px] text-stone-400">10 Rules</span>
+            <ShieldCheck className="h-4 w-4 text-amber-600" />
+            <span>Legal Safety Notice</span>
+            <ChevronRight className="ml-auto h-3.5 w-3.5 opacity-40" />
           </button>
+
+          <div className="flex w-full items-center gap-2.5 rounded-xl border border-stone-200 bg-white px-3 py-2.5 dark:border-stone-700 dark:bg-stone-800/60">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-stone-100 text-stone-500 dark:bg-stone-700 dark:text-stone-300">
+              <CircleUser className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-bold text-stone-800 dark:text-stone-200">
+                {user?.name ?? "Demo User"}
+              </span>
+              <span className="block truncate text-[10px] text-stone-500 dark:text-stone-400">
+                {user?.email ?? "demo@ip-sakti.in"}
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                logout();
+                onClose();
+              }}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-stone-500 transition hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
+              aria-label="Log out"
+              title="Log out"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </aside>
     </>
   );
 }
-

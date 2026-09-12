@@ -30,6 +30,7 @@ from .schemas import (
     FLAG_NO_EVIDENCE,
     FLAG_JURISDICTION_MISMATCH,
     FLAG_UNKNOWN_CITATION,
+    FLAG_UNKNOWN_CITATION_REFERENCE,
     SAFETY_NOTE,
     build_claim_result,
     deduplicate_claims,
@@ -39,6 +40,7 @@ from .schemas import (
     normalize_claim,
     normalize_claims_payload,
     normalize_evidence_payload,
+    split_citation_ids,
     unknown_citation_flag_for,
     wrap_verification_payload,
 )
@@ -158,13 +160,39 @@ def deduplicate_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]
     return deduped
 
 
+def _attach_citation_info(
+    claim_res: dict[str, Any],
+    claim: dict[str, Any],
+    valid_evidence_ids: set[str] | list[str],
+) -> dict[str, Any]:
+    """Preserve a claim's declared `evidence_ids` and surface fabricated ones.
+
+    Citation identity and semantic similarity are separate concepts: an id is
+    only valid if an evidence record with that id was actually supplied to M5.
+    Unknown references are (a) kept visible in the output, (b) listed under
+    `unknown_citation_ids`, and (c) flagged with FLAG_UNKNOWN_CITATION_REFERENCE.
+    """
+    declared = claim.get("evidence_ids") or []
+    valid, unknown = split_citation_ids(declared, valid_evidence_ids)
+    claim_res["declared_evidence_ids"] = declared
+    claim_res["valid_citation_ids"] = valid
+    claim_res["unknown_citation_ids"] = unknown
+    flags = claim_res.get("flags") or []
+    if unknown and FLAG_UNKNOWN_CITATION_REFERENCE not in flags:
+        flags.append(FLAG_UNKNOWN_CITATION_REFERENCE)
+    claim_res["flags"] = flags
+    return claim_res
+
+
 def _post_process_claim_result(
     claim_res: dict[str, Any],
     claim: dict[str, Any],
     best_evidence: dict[str, Any] | None,
+    valid_evidence_ids: set[str] | list[str] | None = None,
 ) -> dict[str, Any]:
     """Apply M5 flag enrichment shared by single/batch verification:
-    UNKNOWN_CITATION on the best evidence and LONG_CLAIM marking."""
+    UNKNOWN_CITATION on the best evidence, LONG_CLAIM marking, and
+    claim-declared citation validation (when evidence ids are available)."""
     existing = claim_res.get("flags") or []
 
     if best_evidence:
@@ -177,6 +205,9 @@ def _post_process_claim_result(
         existing.append(FLAG_LONG_CLAIM)
 
     claim_res["flags"] = existing
+
+    if valid_evidence_ids is not None:
+        claim_res = _attach_citation_info(claim_res, claim, valid_evidence_ids)
     return claim_res
 
 
@@ -195,23 +226,37 @@ def verify_claim(
     normalized_claim = normalize_claim(claim)
 
     if not normalized_claim["text"]:
-        return empty_claim_result(
+        return _attach_citation_info(
+            empty_claim_result(
+                normalized_claim,
+                FLAG_EMPTY_CLAIM,
+                "Empty claim. Semantic matching was not performed.",
+            ),
             normalized_claim,
-            FLAG_EMPTY_CLAIM,
-            "Empty claim. Semantic matching was not performed.",
+            [],
         )
 
     if not evidence:
-        return empty_claim_result(
+        return _attach_citation_info(
+            empty_claim_result(
+                normalized_claim,
+                FLAG_NO_EVIDENCE,
+                "No evidence was provided. Semantic matching was not performed.",
+            ),
             normalized_claim,
-            FLAG_NO_EVIDENCE,
-            "No evidence was provided. Semantic matching was not performed.",
+            [],
         )
 
     try:
+        normalized_evidence = normalize_evidence_payload(evidence)["evidence"]
+        valid_evidence_ids = {item.get("id") for item in normalized_evidence}
         ranked = rank_evidence(normalized_claim["text"], evidence, model=model)
     except Exception as exc:  # pragma: no cover - defensive
-        return _model_error_result(normalized_claim, exc)
+        return _attach_citation_info(
+            _model_error_result(normalized_claim, exc),
+            normalized_claim,
+            [],
+        )
 
     if top_k is not None and top_k > 0:
         ranked = ranked[:top_k]
@@ -220,7 +265,9 @@ def verify_claim(
     best_evidence = ranked[0]["evidence"] if ranked else None
     status = classify_similarity(best_score)
     claim_res = build_claim_result(normalized_claim, status, best_score, ranked, note=SAFETY_NOTE)
-    return _post_process_claim_result(claim_res, normalized_claim, best_evidence)
+    return _post_process_claim_result(
+        claim_res, normalized_claim, best_evidence, valid_evidence_ids=valid_evidence_ids
+    )
 
 
 def verify_claims_batch(
@@ -264,13 +311,21 @@ def verify_claims_batch(
     # Edge Case: Deduplicate evidence items before embedding
     deduped_evidence = deduplicate_evidence(raw_evidence_list)
 
+    # Set of evidence ids actually supplied to M5 — used to validate the
+    # claim-declared evidence_ids and catch fabricated references.
+    valid_evidence_ids = {item.get("id") for item in deduped_evidence}
+
     # Edge Case: No evidence provided
     if not deduped_evidence:
         verification_results = [
-            empty_claim_result(
+            _attach_citation_info(
+                empty_claim_result(
+                    claim,
+                    FLAG_NO_EVIDENCE,
+                    "No evidence was provided. Semantic matching was not performed.",
+                ),
                 claim,
-                FLAG_NO_EVIDENCE,
-                "No evidence was provided. Semantic matching was not performed.",
+                valid_evidence_ids,
             )
             for claim in claims_list
         ]
@@ -282,10 +337,14 @@ def verify_claims_batch(
 
     if not valid_indices:
         verification_results = [
-            empty_claim_result(
+            _attach_citation_info(
+                empty_claim_result(
+                    claim,
+                    FLAG_NO_EVIDENCE,
+                    "All provided evidence passages were empty. Semantic matching was not performed.",
+                ),
                 claim,
-                FLAG_NO_EVIDENCE,
-                "All provided evidence passages were empty. Semantic matching was not performed.",
+                valid_evidence_ids,
             )
             for claim in claims_list
         ]
@@ -297,7 +356,8 @@ def verify_claims_batch(
         evidence_embeddings = embed_texts(valid_texts, model=model)
     except Exception as exc:  # pragma: no cover - defensive
         verification_results = [
-            _model_error_result(claim, exc) for claim in claims_list
+            _attach_citation_info(_model_error_result(claim, exc), claim, valid_evidence_ids)
+            for claim in claims_list
         ]
         return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
 
@@ -309,10 +369,14 @@ def verify_claims_batch(
         # Edge Case: Empty claim text
         if not claim_text:
             verification_results.append(
-                empty_claim_result(
+                _attach_citation_info(
+                    empty_claim_result(
+                        claim,
+                        FLAG_EMPTY_CLAIM,
+                        "Empty claim text. Semantic matching was not performed.",
+                    ),
                     claim,
-                    FLAG_EMPTY_CLAIM,
-                    "Empty claim text. Semantic matching was not performed.",
+                    valid_evidence_ids,
                 )
             )
             continue
@@ -346,7 +410,9 @@ def verify_claims_batch(
                     if FLAG_JURISDICTION_MISMATCH not in claim_res.get("flags", []):
                         claim_res["flags"].append(FLAG_JURISDICTION_MISMATCH)
 
-            claim_res = _post_process_claim_result(claim_res, claim, best_evidence)
+            claim_res = _post_process_claim_result(
+                claim_res, claim, best_evidence, valid_evidence_ids=valid_evidence_ids
+            )
             verification_results.append(claim_res)
         except Exception as exc:  # pragma: no cover - defensive
             verification_results.append(_model_error_result(claim, exc))

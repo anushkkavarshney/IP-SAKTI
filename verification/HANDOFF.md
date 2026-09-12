@@ -30,19 +30,27 @@ decision (Roadmap §19–23, §29, §44–48).
         "claim_id": "C1",
         "text": "The formulation uses Ashwagandha root extract as a biological resource.",
         "claim_type": "ABS",
-        "jurisdiction": "India"
+        "jurisdiction": "India",
+        "evidence_ids": ["E1", "E2"]
       }
     ]
   }
   ```
 - **Field Aliasing**: M5 accepts `claim_id` or `id`. String claims or bare lists are also automatically normalized.
+- **`evidence_ids` (optional)**: explicit citations the claim grounds on.
+  M5 preserves them and validates each id against the supplied evidence set:
+  matches appear in `valid_citation_ids`; ids that do not exist in the evidence
+  are listed in `unknown_citation_ids` and flagged with
+  `UNKNOWN_CITATION_REFERENCE` — a fabricated id is **never** made valid by
+  semantic similarity. Claims without `evidence_ids` are verified semantically
+  as before.
 - **Extraction interface**: `from verification import extract_claims` returns the normalized `{"jurisdiction", "claims"}` payload and is None/malformed-safe.
 
 ---
 
 ### MEMBER 4 — Legal RAG
 - **What Member 4 provides**: Array of retrieved statutory evidence chunks from official legal sources.
-- **Expected Data Contract**:
+- **Expected Data Contract** (two shapes; both normalize identically):
   ```json
   {
     "jurisdiction": "India",
@@ -61,11 +69,35 @@ decision (Roadmap §19–23, §29, §44–48).
     ]
   }
   ```
-- **Alias vocabulary**: M5 accepts `id`/`evidence_id`, `document`/`document_name`, `source`/`source_url`.
-- **Citation safety**: an `authority` value that is non-empty but not on M5's
-  known-authority list is flagged with `UNKNOWN_CITATION`. Recognized Indian
-  authorities include IPO / Indian Patent Office, National Biodiversity
-  Authority, CDSCO, FSSAI, Ministry of AYUSH, DCGI, and friends.
+  Raw Member 4 native chunks (`doc_id`, `act_name`, `content`, `category`,
+  `as_of_date`) are accepted **directly, with no upstream adapter**:
+  ```json
+  {
+    "doc_id": "patent_act_1970",
+    "act_name": "The Patents Act, 1970",
+    "section": "Section 3",
+    "as_of_date": "2026-01-01",
+    "effective_date": "2026-01-01",
+    "jurisdiction": "India",
+    "category": "Patent",
+    "authority": "Indian Patent Office",
+    "source_url": "https://ipindia.gov.in/",
+    "content": "An invention may not be a patentable invention if it is a mere discovery of a scientific principle..."
+  }
+  ```
+- **Alias vocabulary**: M5 accepts `id`/`evidence_id`/`doc_id`,
+  `document`/`document_name`/`act_name`, `text`/`content`,
+  `legal_domain`/`category`, `source`/`source_url`, plus `section`,
+  `as_of_date`, `effective_date`, `authority`, `jurisdiction`.
+- **Authority handling**: a recognized Indian authority (IPO / Indian Patent
+  Office, National Biodiversity Authority, CDSCO, FSSAI, Ministry of AYUSH,
+  DCGI, etc.) scores 100; a real-looking unrecognized authority scores a
+  conservative 40 and raises `UNKNOWN_CITATION`; **missing or placeholder
+  authorities ("Not provided by the legal corpus yet", "unknown",
+  "unavailable", empty) score 0** — absence of information earns no credit.
+- **Citation safety**: `UNKNOWN_CITATION` (unrecognized authority) and
+  `UNKNOWN_CITATION_REFERENCE` (fabricated/stale claim-declared evidence id)
+  both withhold the analysis pending verification.
 - **Traceability Rule**: Member 4 must preserve statutory metadata (`document`, `section`, `authority`, `source_url`, `effective_date`, `legal_domain`) on every chunk. Member 5 will retain all metadata intact in the verification output.
 
 ---
@@ -98,7 +130,8 @@ decision (Roadmap §19–23, §29, §44–48).
   - `status` (`SUPPORTED`, `PARTIALLY_SUPPORTED`, `UNSUPPORTED`)
   - `similarity_score`
   - `best_evidence_id` and `best_evidence` metadata (`document`, `section`, `source_url`, `authority`, `legal_domain`)
-  - `flags` (e.g. `["JURISDICTION_MISMATCH"]`, `["NO_EVIDENCE"]`, `["UNKNOWN_CITATION"]`)
+  - `flags` (e.g. `["JURISDICTION_MISMATCH"]`, `["NO_EVIDENCE"]`, `["UNKNOWN_CITATION"]`, `["UNKNOWN_CITATION_REFERENCE"]`)
+  - citation fields: `declared_evidence_ids`, `valid_citation_ids`, `unknown_citation_ids`
   - `summary` counts (`total_claims`, `supported_claims`, `unsupported_claims`)
   - `confidence` object (`score`, `level`, `signals`)
   - `abstain` flag and `abstain_reason`
@@ -123,12 +156,14 @@ decision (Roadmap §19–23, §29, §44–48).
 ```
 Weights: retrieval 0.30, source authority 0.25, claim support 0.25,
 jurisdiction match 0.20. Levels: HIGH 80–100, MEDIUM 50–79, LOW < 50.
-`source_authority` is never hardcoded to 0 — the recognised-authority list
-feeds it directly.
+`source_authority` is never hardcoded to 0 and is never inflated by
+placeholders — recognized authorities feed 100, missing/placeholder feeds 0,
+and an unrecognized-but-real authority feeds a conservative 40.
 
 ### Abstention (safe refusal)
 `abstain: true` when: no evidence, no claims, confidence < 30 (default), or a
-non-hard abstention warning for unrecognized citations on the best evidence.
+citation-integrity warning is present (`UNKNOWN_CITATION` unrecognized
+authority, or `UNKNOWN_CITATION_REFERENCE` fabricated evidence id).
 
 ---
 
@@ -136,5 +171,5 @@ non-hard abstention warning for unrecognized citations on the best evidence.
 
 - **Semantic Relevance Signal**: `status` and `similarity_score` measure semantic similarity and relevance against retrieved statutory passages.
 - **Not Legal Advice**: Cosine similarity scores do **not** represent legal proof, validity, or binding legal determinations.
-- **No Hallucination**: If evidence is missing, M5 returns `UNSUPPORTED` with `FLAG_NO_EVIDENCE` rather than inventing citations. Fabricated/unrecognized authorities are flagged (`UNKNOWN_CITATION`).
-- **No Fake Contradiction**: M5 never emits "the evidence contradicts the claim". NLI-based contradiction detection is explicitly out of scope.
+- **No Hallucination**: If evidence is missing, M5 returns `UNSUPPORTED` with `FLAG_NO_EVIDENCE` rather than inventing citations. Unrecognized authorities are flagged (`UNKNOWN_CITATION`), and fabricated / stale claim-declared evidence ids are flagged (`UNKNOWN_CITATION_REFERENCE`) — never silently accepted.
+- **No Fake Contradiction**: M5 never emits "the evidence contradicts the claim". NLI-based contradiction detection is explicitly out of scope and is a future / P2 capability.

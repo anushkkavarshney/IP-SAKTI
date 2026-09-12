@@ -1,9 +1,7 @@
 import {
   AnalyzePayload,
-  ClarificationAnswers,
   ClarificationQuestion,
   FinalRoadmapResponse,
-  LegalEvidenceChunk,
 } from "../types/roadmap";
 
 export const CLARIFICATION_QUESTIONS: ClarificationQuestion[] = [

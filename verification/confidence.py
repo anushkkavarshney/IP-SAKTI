@@ -25,6 +25,7 @@ consumes the per-claim verification results produced by verifier.py.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .schemas import (
@@ -32,6 +33,8 @@ from .schemas import (
     CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
     DEFAULT_JURISDICTION,
+    FLAG_UNKNOWN_CITATION,
+    FLAG_UNKNOWN_CITATION_REFERENCE,
     STATUS_PARTIAL,
     STATUS_SUPPORTED,
     _is_known_authority,
@@ -68,13 +71,50 @@ ABSTAIN_REASON_NO_CLAIMS = (
 )
 
 
+ABSTAIN_REASON_UNKNOWN_CITATION = (
+    "Some claims cite evidence references or authorities that could not be "
+    "verified against the supplied legal corpus. Confidence was adjusted "
+    "downward and the analysis is being withheld pending verification."
+)
+
+
+# Phrases/words that indicate an authority field carries NO usable
+# information (placeholder values filled by upstream adapters), as opposed
+# to a real (recognized or unrecognized) authority.
+AUTHORITY_UNKNOWN_PHRASES = ("not provided", "not listed", "not available", "not yet available")
+AUTHORITY_UNKNOWN_TOKENS = {"unknown", "unavailable", "tbd", "na"}
+
+
+def _is_authority_unknown(authority: str) -> bool:
+    """True when the authority value is empty or a placeholder such as
+    'Not provided by the legal corpus yet' / 'unknown' / 'unavailable'.
+
+    These carry no authority information and must NEVER earn authority credit.
+    """
+    norm = (authority or "").strip().casefold()
+    if not norm:
+        return True
+    if any(phrase in norm for phrase in AUTHORITY_UNKNOWN_PHRASES):
+        return True
+    tokens = set(re.findall(r"[a-z0-9]+", norm))
+    return bool(tokens & AUTHORITY_UNKNOWN_TOKENS)
+
+
 def _best_authority_score(claim_result: dict[str, Any]) -> float:
-    """100 when the best evidence's authority is on the known-authority
-    list, 40 when an authority is present but unrecognised, 0 when the
-    evidence has no authority at all."""
+    """Authority credit for the best evidence of one claim.
+
+    Scoring is honest and documented:
+      100 — authority is on the known-authority list.
+        0 — authority is empty, None, or a placeholder ('Not provided by
+            the legal corpus yet', 'unknown', 'unavailable', ...): absence
+            of information earns no credit.
+       40 — a real-looking authority present but NOT on the known list.
+            Conservative credit: it is not assumed to be fake, but it is
+            not treated as verified either.
+    """
     best = claim_result.get("best_evidence") or {}
     authority = (best.get("authority") or "").strip()
-    if not authority:
+    if _is_authority_unknown(authority):
         return 0.0
     return 100.0 if _is_known_authority(authority) else 40.0
 
@@ -155,9 +195,15 @@ def calculate_confidence(
 
 
 def _has_flagged_citation(verification_results: list[dict[str, Any]]) -> bool:
-    """True if any claim's best evidence carries UNKNOWN_CITATION."""
+    """True if any claim carries a citation-integrity flag:
+    - UNKNOWN_CITATION: the best evidence's authority is unrecognized, or
+    - UNKNOWN_CITATION_REFERENCE: the claim declared an evidence id that is
+      not present in the supplied evidence set (fabricated/stale citation).
+    Both are treated as warnings that the citation chain is not fully
+    verifiable, not as legal contradiction detection."""
+    citation_flags = {FLAG_UNKNOWN_CITATION, FLAG_UNKNOWN_CITATION_REFERENCE}
     for result in verification_results:
-        if "UNKNOWN_CITATION" in (result.get("flags") or []):
+        if citation_flags & set(result.get("flags") or []):
             return True
     return False
 
@@ -176,9 +222,9 @@ def calculate_abstention(
       - no claims were provided, OR
       - confidence score is below ABSTAIN_SCORE_MIN (default 30).
 
-    A UNKNOWN_CITATION on the best evidence raises a strong warning but is
-    not a hard abstention by itself — the low source_authority it produces
-    typically pushes the score low anyway.
+    A UNKNOWN_CITATION / UNKNOWN_CITATION_REFERENCE flag is a material
+    warning: the citation chain cannot be fully verified, so the analysis is
+    withheld pending verification. Recognized authorities never raise it.
 
     Returns {"abstain", "abstain_reason", "reasons"}.
     """
@@ -202,11 +248,7 @@ def calculate_abstention(
         elif "no_claims" in reasons:
             reason = ABSTAIN_REASON_NO_CLAIMS
         elif "unknown_citation" in reasons:
-            reason = (
-                "Some supporting evidence cites an authority not currently "
-                "recognized by the platform. Confidence was adjusted downward "
-                "and the analysis is being withheld pending verification."
-            )
+            reason = ABSTAIN_REASON_UNKNOWN_CITATION
         else:
             reason = ABSTAIN_REASON_LOW_CONFIDENCE
 
