@@ -1,15 +1,13 @@
 """
-Day 2 Task 1 — JSON data contracts for Member 5.
+Member 5 — JSON data contracts, normalization, and flags.
 
 M3 claims  →  M5  ←  M4 evidence
                  ↓
          verification result
 
-These helpers only normalize field names and fill safe defaults.
-They do NOT run embeddings, batch verification, confidence, or abstention.
-
-M3 and M4 code is not in this repo yet.
-This is the proposed interface they should follow.
+These helpers normalize field names, fill safe defaults, and validate
+inputs.  They do NOT run embeddings, batch verification, confidence,
+or abstention.
 """
 
 from __future__ import annotations
@@ -33,6 +31,14 @@ STATUS_UNSUPPORTED = "UNSUPPORTED"
 FLAG_NO_EVIDENCE = "NO_EVIDENCE"
 FLAG_EMPTY_CLAIM = "EMPTY_CLAIM"
 FLAG_JURISDICTION_MISMATCH = "JURISDICTION_MISMATCH"
+FLAG_UNKNOWN_CITATION = "UNKNOWN_CITATION"
+FLAG_EMPTY_EVIDENCE_PASSAGE = "EMPTY_EVIDENCE_PASSAGE"
+FLAG_LONG_CLAIM = "LONG_CLAIM"
+FLAG_MODEL_ERROR = "MODEL_ERROR"
+
+CONFIDENCE_HIGH = "HIGH"
+CONFIDENCE_MEDIUM = "MEDIUM"
+CONFIDENCE_LOW = "LOW"
 
 # Proposed example payloads (synthetic / demo only).
 EXAMPLE_M3_CLAIMS = {
@@ -79,6 +85,26 @@ EXAMPLE_M4_EVIDENCE = {
     ],
 }
 
+KNOWN_AUTHORITIES = {
+    "india patent office", "ip india", "ipo",
+    "indian patent office", "controller general of patents",
+    "national biodiversity authority", "nba",
+    "cdsco", "central drugs standard control organisation",
+    "fssai", "food safety and standards authority of india",
+    "ministry of ayush", "ayush",
+    "ministry of commerce and industry", "dpiit",
+    "indian council of medical research", "icmr",
+    "ministry of environment forest and climate change",
+    "ministry of environment, forest and climate change", "moefcc",
+    "controller general of patents designs and trademarks",
+    "office of the controller general of patents",
+    "drug controller general of india", "dcgi",
+    "sebi", "securities and exchange board of india",
+    "central board of direct taxes", "cbdt",
+    "ipsakti official", "department of industrial policy",
+    "department for promotion of industry and internal trade",
+}
+
 
 def normalize_jurisdiction(value: Any, default: str = DEFAULT_JURISDICTION) -> str:
     text = str(value or "").strip()
@@ -99,6 +125,51 @@ def _first_present(item: dict[str, Any], keys: list[str], default: str = "") -> 
     return default
 
 
+def _is_known_authority(authority: str) -> bool:
+    """Check whether a string matches a known Indian legal authority.
+    Empty/blank input is never treated as a known authority."""
+    normed = (authority or "").strip().casefold()
+    if not normed:
+        return False
+    return any(known in normed or normed in known for known in KNOWN_AUTHORITIES)
+
+
+def extract_claims(
+    claims: dict[str, Any] | list | None,
+) -> dict[str, Any]:
+    """
+    TASK 1 — Canonical public API to extract and normalize claims from
+    M3 output (or any upstream payload).
+
+    Accepts:
+      - { "claims": [...] }  with optional "jurisdiction"
+      - [ claim_dict, ... ]
+      - None / empty  → returns empty list
+    """
+    if not claims:
+        return {"jurisdiction": DEFAULT_JURISDICTION, "claims": []}
+
+    if isinstance(claims, list):
+        raw_items = claims
+        default_jurisdiction = DEFAULT_JURISDICTION
+    elif isinstance(claims, dict):
+        default_jurisdiction = normalize_jurisdiction(claims.get("jurisdiction"))
+        raw_items = claims.get("claims") or []
+    else:
+        return {"jurisdiction": DEFAULT_JURISDICTION, "claims": []}
+
+    out_claims = []
+    for idx, raw in enumerate(raw_items, start=1):
+        normed = normalize_claim(
+            raw,
+            default_id=f"claim_{idx}",
+            default_jurisdiction=default_jurisdiction,
+        )
+        if normed.get("text"):
+            out_claims.append(normed)
+    return {"jurisdiction": default_jurisdiction, "claims": out_claims}
+
+
 def normalize_claim(
     claim: str | dict[str, Any],
     *,
@@ -107,13 +178,26 @@ def normalize_claim(
 ) -> dict[str, Any]:
     """
     Accept Day 1 claim strings or M3 claim objects.
+    None-safe: any non-dict/non-string input returns an empty-text placeholder.
 
     M3 may send `id` (roadmap) or `claim_id` (alias).
     """
+    if claim is None:
+        return {
+            "id": default_id,
+            "text": "",
+            "jurisdiction": normalize_jurisdiction(default_jurisdiction),
+        }
     if isinstance(claim, str):
         return {
             "id": default_id,
             "text": claim.strip(),
+            "jurisdiction": normalize_jurisdiction(default_jurisdiction),
+        }
+    if not isinstance(claim, dict):
+        return {
+            "id": default_id,
+            "text": "",
             "jurisdiction": normalize_jurisdiction(default_jurisdiction),
         }
 
@@ -128,14 +212,18 @@ def normalize_claim(
     }
 
 
-def normalize_claims_payload(payload: dict[str, Any] | list) -> dict[str, Any]:
+def normalize_claims_payload(payload: dict[str, Any] | list | None) -> dict[str, Any]:
     """Accept `{claims: [...]}` or a bare list of claims."""
+    if payload is None:
+        return {"jurisdiction": DEFAULT_JURISDICTION, "claims": []}
     if isinstance(payload, list):
         default_jurisdiction = DEFAULT_JURISDICTION
         raw_claims = payload
-    else:
+    elif isinstance(payload, dict):
         default_jurisdiction = normalize_jurisdiction(payload.get("jurisdiction"))
         raw_claims = payload.get("claims") or []
+    else:
+        return {"jurisdiction": DEFAULT_JURISDICTION, "claims": []}
 
     claims = []
     for index, raw in enumerate(raw_claims, start=1):
@@ -157,8 +245,22 @@ def normalize_evidence_item(
 ) -> dict[str, Any]:
     """
     Accept Day 1 evidence (`source`) and M4 evidence (`source_url`, `id`).
-    Keep original extra keys.
+    None/malformed-safe.  Keep original extra keys.
     """
+    if item is None or not isinstance(item, dict):
+        return {
+            "id": default_id,
+            "text": "",
+            "document": "",
+            "section": "",
+            "jurisdiction": default_jurisdiction,
+            "source_url": "",
+            "source": "",
+            "legal_domain": "",
+            "authority": "",
+            "effective_date": "",
+        }
+
     normalized = deepcopy(item)
     source_url = _first_present(item, ["source_url", "source"])
     document = _first_present(item, ["document", "document_name"])
@@ -178,14 +280,18 @@ def normalize_evidence_item(
     return normalized
 
 
-def normalize_evidence_payload(payload: dict[str, Any] | list) -> dict[str, Any]:
-    """Accept `{evidence: [...]}` or a bare evidence list (Day 1 test cases)."""
+def normalize_evidence_payload(payload: dict[str, Any] | list | None) -> dict[str, Any]:
+    """Accept `{evidence: [...]}` or a bare evidence list."""
+    if payload is None:
+        return {"jurisdiction": DEFAULT_JURISDICTION, "evidence": []}
     if isinstance(payload, list):
         default_jurisdiction = DEFAULT_JURISDICTION
         raw_items = payload
-    else:
+    elif isinstance(payload, dict):
         default_jurisdiction = normalize_jurisdiction(payload.get("jurisdiction"))
         raw_items = payload.get("evidence") or []
+    else:
+        return {"jurisdiction": DEFAULT_JURISDICTION, "evidence": []}
 
     evidence = []
     for index, raw in enumerate(raw_items, start=1):
@@ -211,7 +317,25 @@ def ranked_evidence_row(score: float, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def empty_claim_result(claim: dict[str, Any], flag: str, note: str) -> dict[str, Any]:
+def unknown_citation_flag_for(authority: str) -> str | None:
+    """Return FLAG_UNKNOWN_CITATION if an authority is non-empty but
+    not on the known-authority list."""
+    if not authority:
+        return None
+    return None if _is_known_authority(authority) else FLAG_UNKNOWN_CITATION
+
+
+def empty_claim_result(
+    claim: dict[str, Any],
+    flag: str,
+    note: str,
+    *,
+    extra_flags: list[str] | None = None,
+) -> dict[str, Any]:
+    flags = [flag]
+    for extra in extra_flags or []:
+        if extra and extra not in flags:
+            flags.append(extra)
     return {
         "claim_id": claim.get("id", "claim_1"),
         "claim": claim.get("text", ""),
@@ -224,7 +348,7 @@ def empty_claim_result(claim: dict[str, Any], flag: str, note: str) -> dict[str,
         "best_evidence": None,
         "ranked_evidence": [],
         "jurisdiction_match": False,
-        "flags": [flag],
+        "flags": flags,
     }
 
 
@@ -234,17 +358,29 @@ def build_claim_result(
     score: float,
     ranked: list[dict[str, Any]],
     note: str = SAFETY_NOTE,
+    *,
+    jurisdiction_match: bool | None = None,
+    extra_flags: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build one M5 per-claim object. Does not decide legal truth."""
     best_row = ranked[0] if ranked else None
     best_evidence = best_row["evidence"] if best_row else None
     best_id = best_evidence.get("id") if best_evidence else None
-    match = False
     flags: list[str] = []
     if best_evidence:
-        match = jurisdictions_match(claim.get("jurisdiction", ""), best_evidence.get("jurisdiction", ""))
+        match = (
+            jurisdictions_match(claim.get("jurisdiction", ""), best_evidence.get("jurisdiction", ""))
+            if jurisdiction_match is None
+            else jurisdiction_match
+        )
         if not match:
             flags.append(FLAG_JURISDICTION_MISMATCH)
+    else:
+        match = False
+
+    for extra in extra_flags or []:
+        if extra and extra not in flags:
+            flags.append(extra)
 
     return {
         "claim_id": claim.get("id", "claim_1"),
@@ -292,6 +428,30 @@ def wrap_verification_payload(verification: list[dict[str, Any]]) -> dict[str, A
         "verification": verification,
         "summary": build_summary(verification),
     }
+
+
+LONG_CLAIM_WORD_THRESHOLD = 150
+LONG_CLAIM_CHAR_THRESHOLD = 1200
+
+
+def is_long_claim(text: str) -> bool:
+    """Detect excessively long claims that may dilute similarity."""
+    words = text.split()
+    return len(words) > LONG_CLAIM_WORD_THRESHOLD or len(text) > LONG_CLAIM_CHAR_THRESHOLD
+
+
+def deduplicate_claims(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove duplicate claims by normalized text, preserving first occurrence.
+    Empty-text claims are preserved so the verifier can flag them."""
+    seen: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for claim in claims:
+        normed = (claim.get("text") or "").strip().casefold()
+        if normed in seen:
+            continue
+        seen.add(normed)
+        deduped.append(claim)
+    return deduped
 
 
 def print_contract_examples() -> None:

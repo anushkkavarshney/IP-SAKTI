@@ -1,18 +1,27 @@
-# IP-SAKTI Navigator — Member 5 (Day 1)
+# IP-SAKTI Navigator — Member 5 (Verification + Confidence)
 
-First-stage **claim → evidence semantic matching** for IP-SAKTI Navigator (SIH 2026, PS SIH26045).
+First-stage **claim → evidence semantic matching**, plus the M5 **confidence**
+and **safe-abstention** engine, for IP-SAKTI Navigator (SIH 2026, PS SIH26045).
 
-This module does **not** decide whether a legal claim is true. It only measures how closely a claim matches retrieved text.
+This module does **not** decide whether a legal claim is true. It only measures
+how closely a claim matches retrieved text and how confident the platform
+should be about presenting that analysis.
 
 ## What this module does
 
 ```text
+M3 Claims
+   ↓ extract_claims
 Claim
-  → Sentence embedding
-  → Cosine similarity vs each evidence passage
-  → Rank evidence
-  → Best evidence
-  → Preliminary semantic support status
+   → Sentence embedding
+   → Cosine similarity vs each evidence passage
+   → Rank evidence (top_k)
+   → Best evidence
+   → Preliminary semantic support status
+   → Flags (NO_EVIDENCE, EMPTY_CLAIM, JURISDICTION_MISMATCH,
+            UNKNOWN_CITATION, LONG_CLAIM, MODEL_ERROR)
+   ↓
+Confidence engine (0–100) + safe abstention decision
 ```
 
 Possible preliminary labels:
@@ -23,15 +32,49 @@ Possible preliminary labels:
 
 These labels mean **preliminary semantic support**, not legal proof.
 
+## Confidence engine (M5-owned)
+
+Computed in `confidence.py` (`calculate_confidence`), always on a **0–100**
+scale for both the overall score and each signal:
+
+| Signal              | Weight | Meaning                                              |
+|---------------------|--------|------------------------------------------------------|
+| `retrieval_quality` | 0.30   | How much evidence was provided (≤ 6 items → 100)     |
+| `source_authority`  | 0.25   | Best-evidence authority from the known list          |
+| `claim_support`     | 0.25   | Share of claims supported / partially supported      |
+| `jurisdiction_match`| 0.20   | Share of claims whose best evidence matches jurisdiction |
+
+Levels: **HIGH = 80–100**, **MEDIUM = 50–79**, **LOW < 50**.
+
+## Safe abstention (M5-owned)
+
+`calculate_abstention` decides whether the analysis should be **withheld**:
+- no evidence provided → abstain;
+- confidence below the safe-decision threshold (default 30) → abstain;
+- no claims → abstain;
+- an unrecognized citation on the best evidence lowers the score and triggers
+  a withholding warning.
+
+Unsupported claims are **flagged, never presented as fact**.
+
+## No fake contradiction detection
+
+M5 performs *semantic relevance ranking only*. It intentionally never emits
+"the evidence contradicts the claim" statements — contradiction/NLI detection
+is out of scope and documented as a limitation (`validate_no_contradiction_detection`).
+
 ## Model
 
 `sentence-transformers/all-MiniLM-L6-v2`
 
-Chosen because it is small, fast on a laptop, and good enough for a 5-day MVP semantic-matching prototype.
+Loaded **once per process** (`load_model`), small, fast on a laptop, and good
+enough for a 5-day MVP semantic-matching prototype.
 
 ## How embeddings work
 
-An embedding is a list of numbers that represents the **meaning** of a sentence. Two sentences about biological resources should land close together in that numeric space, even if they do not share the exact same words.
+An embedding is a list of numbers that represents the **meaning** of a
+sentence. Two sentences about biological resources should land close together
+in that numeric space, even if they do not share the exact same words.
 
 ## What cosine similarity means
 
@@ -40,41 +83,111 @@ Cosine similarity compares two embeddings.
 - Values closer to **1** → stronger semantic similarity
 - Values closer to **0** (or lower) → weaker semantic similarity
 
-Similarity is a **relevance signal**. It does not mean the claim is legally correct.
+Similarity is a **relevance signal**. It does not mean the claim is legally
+correct.
 
 ## Important limitation
 
-Semantic similarity is only a first-stage relevance signal and is **not sufficient by itself** to establish legal support.
+Semantic similarity is only a first-stage relevance signal and is **not
+sufficient by itself** to establish legal support. It is also **not
+contradiction detection** — high topical overlap can coexist with an absolute,
+untrue claim (see `test_category_12_ambiguous_semantic_match`).
 
-Day 1 does **not** include NLI, a cross-encoder, a confidence engine, or abstention. Those come later.
+All passages in `test_cases.py` are **synthetic demo evidence**. They are not
+official Indian Acts, rules, or citations. Real evidence will later come from
+Member 4's RAG module.
 
-All passages in `test_cases.py` are **synthetic demo evidence**. They are not official Indian Acts, rules, or citations. Real evidence will later come from Member 4's RAG module.
-
-Similarity thresholds in `verifier.py` (`SUPPORTED_MIN`, `PARTIALLY_SUPPORTED_MIN`) are **starting constants** for this demo set. They are not scientifically or legally validated.
+Similarity thresholds in `verifier.py` (`SUPPORTED_MIN = 0.70`,
+`PARTIALLY_SUPPORTED_MIN = 0.45`) are **starting constants** for this demo set.
+They are not scientifically or legally validated.
 
 ## How to run
 
-From the `verification` folder:
+From the repository root (the package uses relative imports):
 
 ```bash
 pip install -r requirements.txt
-python verifier.py
+
+python -m verification.verifier          # Day-1 synthetic test cases (13/13)
+python -m verification.test_batch        # batch scenarios (10/10)
+python -m verification.schemas           # print contract examples
+python -m verification.examples.integration_example   # M3 → M5 → M4 demo
+```
+
+Run the full test suite:
+
+```bash
+python -m pytest verification/tests -q
 ```
 
 The first run downloads the model. Later runs reuse it from the local cache.
 
-## Day 2 Task 1 — Interface Contracts & Schema Design
+## Public API
 
-M3 and M4 code are not in this repository yet. `schemas.py` defines the canonical, implementation-ready JSON data contracts between modules:
+```python
+from verification import (
+    extract_claims,        # canonical claim extraction (T1)
+    verify_claims,         # batch verification + confidence + abstention
+    verify_claim,          # single-claim verification
+    calculate_confidence,  # 0–100 confidence engine
+    calculate_abstention,  # safe abstention decision
+)
+```
+
+`verify_claims(claims, evidence, top_k=3, target_jurisdiction="India")` returns:
+
+```json
+{
+  "support_type": "preliminary_semantic_support",
+  "note": "Similarity is a first-stage relevance signal only. It does not establish legal validity or legal proof.",
+  "verification": [
+    {
+      "claim_id": "C1",
+      "claim": "...",
+      "status": "SUPPORTED",
+      "score": 0.85,
+      "similarity_score": 0.85,
+      "support_type": "preliminary_semantic_support",
+      "note": "Similarity is a first-stage relevance signal only. It does not establish legal validity or legal proof.",
+      "best_evidence_id": "E1",
+      "best_evidence": { "...": "..." },
+      "ranked_evidence": [ "...": "..." ],
+      "jurisdiction_match": true,
+      "flags": []
+    }
+  ],
+  "summary": {
+    "total_claims": 1,
+    "supported_claims": 1,
+    "partially_supported_claims": 0,
+    "unsupported_claims": []
+  },
+  "confidence": {
+    "score": 100.0,
+    "level": "HIGH",
+    "signals": {
+      "retrieval_quality": 100.0,
+      "source_authority": 100.0,
+      "claim_support": 100.0,
+      "jurisdiction_match": 100.0
+    },
+    "note": null
+  },
+  "abstain": false,
+  "abstain_reason": null,
+  "abstain_reasons": []
+}
+```
+
+## Interface contracts
 
 ```text
 M3 Generated Claims  →  M5 Verification Module  ←  M4 Retrieved Legal Evidence
                                 ↓
-                    Verification Output JSON
+                    Verification Output JSON (+ confidence + abstention)
 ```
 
-### 1. M3 → M5 Contract (Claims Payload)
-M3 provides extracted claims requiring verification.
+### M3 → M5 (Claims Payload)
 ```json
 {
   "jurisdiction": "India",
@@ -89,8 +202,7 @@ M3 provides extracted claims requiring verification.
 }
 ```
 
-### 2. M4 → M5 Contract (Evidence Payload)
-M4 provides authoritative legal chunks retrieved from official statutory sources.
+### M4 → M5 (Evidence Payload)
 ```json
 {
   "jurisdiction": "India",
@@ -110,139 +222,64 @@ M4 provides authoritative legal chunks retrieved from official statutory sources
 }
 ```
 
-### 3. M5 → Downstream Contract (Verification Results Payload)
-M5 produces claim-by-claim preliminary semantic support status, similarity scores, ranked evidence, jurisdiction matching, and warning flags.
-```json
-{
-  "support_type": "preliminary_semantic_support",
-  "note": "Similarity is a first-stage relevance signal only. It does not establish legal validity or legal proof.",
-  "verification": [
-    {
-      "claim_id": "C1",
-      "claim": "The innovation may involve a biological resource under Indian law.",
-      "status": "SUPPORTED",
-      "score": 0.85,
-      "similarity_score": 0.85,
-      "support_type": "preliminary_semantic_support",
-      "note": "Similarity is a first-stage relevance signal only. It does not establish legal validity or legal proof.",
-      "best_evidence_id": "E1",
-      "best_evidence": { ... },
-      "ranked_evidence": [ ... ],
-      "jurisdiction_match": true,
-      "flags": []
-    }
-  ],
-  "summary": {
-    "total_claims": 1,
-    "supported_claims": 1,
-    "partially_supported_claims": 0,
-    "unsupported_claims": []
-  }
-}
-```
-
 ### Backwards Compatibility & Field Aliasing
 The schema normalizers in `schemas.py` automatically adapt:
 - Claim ID: accepts both `id` and `claim_id`
 - Evidence ID: accepts both `id` and `evidence_id`
 - Source URL: accepts both `source` and `source_url`
 - Document Name: accepts both `document` and `document_name`
-- Input format: accepts string claims / bare lists (Day 1 format) as well as full JSON payloads.
+- Input format: accepts string claims / bare lists (Day 1 format) as well as
+  full JSON payloads, and is **None / malformed-safe** for both claims and
+  evidence.
 
-`status` signifies preliminary semantic support, NOT legal proof or validation.
-Confidence scoring and abstention are isolated in subsequent tasks.
+## Batch verification engine
 
-## Day 2 Task 2 — Batch Claim Verification Engine
-
-`verify_claims_batch` in `verifier.py` provides multi-claim, multi-evidence batch verification.
+`verify_claims_batch` in `verifier.py` provides multi-claim, multi-evidence
+batch verification.
 
 ### Capabilities
-- **Batch Embedding**: Vectorizes all evidence chunks in a single matrix pass for performance.
-- **Top-K Ranking**: Slices evidence passages per claim to configurable `top_k` (default `top_k=3`).
-- **Deduplication**: Automatically filters duplicate evidence passages by ID or text content.
-- **Jurisdiction Safety**: Flags jurisdiction mismatches (`JURISDICTION_MISMATCH`) when evaluating non-India evidence against India claims.
-- **Metadata Integrity**: Retains statutory metadata (`document`, `section`, `authority`, `source_url`, `effective_date`) without inventing missing fields.
+- **Batch Embedding**: Vectorizes all evidence chunks in a single matrix pass
+  (one batched `encode` call) for performance.
+- **Top-K Ranking**: Slices evidence passages per claim to configurable
+  `top_k` (default `top_k=3`).
+- **Claim Deduplication**: Filters duplicate claims by normalized text.
+- **Evidence Deduplication**: Filters duplicate evidence passages by ID or text.
+- **Jurisdiction Safety**: Flags jurisdiction mismatches
+  (`JURISDICTION_MISMATCH`).
+- **Citation Safety**: Flags unrecognized authorities (`UNKNOWN_CITATION`).
+- **Long-claim awareness**: Marks overlength claims (`LONG_CLAIM`).
+- **Defensive failures**: Model/embedding errors produce structured
+  `MODEL_ERROR` results instead of crashing.
+- **Metadata Integrity**: Retains statutory metadata without inventing fields.
 
-### Python API Usage
-```python
-from verifier import verify_claims_batch
+## Test suite
 
-result = verify_claims_batch(
-    claims=m3_claims_payload,
-    evidence=m4_evidence_payload,
-    top_k=3,
-    target_jurisdiction="India",
-)
-```
+- `verification/tests/test_verifier.py` — 12 edge-case categories (Day 2 / T3).
+- `verification/tests/test_integration.py` — importability + determinism.
+- `verification/tests/test_m5_full.py` — 32 mandatory M5 tests (confidence,
+  abstention, citation safety, normalization hardening, dedup, long claims,
+  model errors, M4 alias compatibility, evidence link integrity).
 
-### Running Batch Tests
-From the `verification` folder:
 ```bash
-python test_batch.py
+python -m pytest verification/tests -q
 ```
-Runs 10 scenario edge-case tests (single/multi-claims, empty claims/evidence, irrelevant evidence, duplicate deduplication, metadata preservation, `top_k` slicing, and jurisdiction mismatch flagging).
 
-## Day 2 Task 3 — Testing, Validation & Edge Cases
+## Package layout
 
-The test suite in `verification/tests/test_verifier.py` covers 12 required edge-case categories.
+```
+verification/
+  __init__.py      public API exports
+  schemas.py       normalization + flags + claim extraction
+  verifier.py      embedding, ranking, batch verification
+  confidence.py    confidence engine + safe abstention
+  test_cases.py    synthetic Day-1 cases (13)
+  test_batch.py    batch scenario runner (10)
+  examples/integration_example.py   M3→M5→M4 demo
+  tests/           pytest suite (12 + 8 + 32)
+```
 
-### How to Run Tests
-From the `verification` folder:
+Run the integration example from the repo root:
+
 ```bash
-# Run using Pytest
-pytest tests/test_verifier.py
-
-# Or run directly via Python
-python tests/test_verifier.py
+python -m verification.examples.integration_example
 ```
-
-### 12 Category Test Breakdown
-1. **Strong Semantic Match**: Asserts high similarity (>= 0.70) and correct rank-1 statutory evidence selection.
-2. **Partial Support**: Asserts proper partial similarity signal handling when claim text exceeds evidence coverage.
-3. **Unsupported Claim**: Asserts low similarity / unsupported classification when evidence contradicts or lacks support.
-4. **Irrelevant Evidence**: Asserts `UNSUPPORTED` status and score < 0.45 for off-topic evidence.
-5. **Multiple Evidence Chunks**: Asserts correct Top-K ranking order across 5–10 mixed evidence chunks.
-6. **Multiple Claims**: Asserts independent claim evaluation, ID tracking, and separate evidence ranking in batch runs.
-7. **No Evidence Handling**: Asserts `UNSUPPORTED` status and `NO_EVIDENCE` flag when evidence list is empty.
-8. **Empty Claim List Handling**: Asserts zero total claims and empty output array without crashing.
-9. **Jurisdiction Mismatch Flagging**: Asserts `jurisdiction_match: false` and `JURISDICTION_MISMATCH` flag for non-India evidence.
-10. **Duplicate Evidence Deduplication**: Asserts deduplication by ID or text content without wasting Top-K slots.
-11. **Missing Metadata Preservation**: Asserts preservation of empty metadata strings (`""`) without fabricating missing legal fields.
-12. **Ambiguous Semantic Match (Topical vs Entailment)**: Demonstrates topical similarity overlap vs logical entailment limitations.
-
-### Key Architectural Finding & Limitation
-**Semantic Similarity $\neq$ Logical Entailment**:
-Sentence embeddings calculate topical relevance and vocabulary overlap. A claim asserting an absolute outcome (e.g., *"A patent will definitely be granted"*) may receive a high similarity score against conditional legal text (*"Patent protection depends on applicable requirements"*) because both share patent terminology. This empirical finding explicitly justifies the subsequent NLI (Natural Language Inference) and Cross-Encoder entailment layers.
-
-## Day 2 Task 4 — Integration Readiness & Public Entry Point
-
-The `verification` folder is structured as a clean, importable Python package with centralized configuration constants.
-
-### Clean Public Entry Point
-```python
-from verification import verify_claims
-
-# Run batch verification
-result = verify_claims(
-    claims=m3_claims_payload,
-    evidence=m4_evidence_payload,
-    top_k=3,
-    target_jurisdiction="India"
-)
-```
-
-### Integration Handoff & Example
-- **Integration Example Script**: `python examples/integration_example.py`
-- **Handoff Document**: `HANDOFF.md` contains detailed contract expectations for Member 3 (Claims), Member 4 (Evidence RAG), Member 2 (Backend API), and Member 6 (Database).
-
-### Centralized Configuration Constants
-Located in `verifier.py` and `schemas.py`:
-- `MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"`
-- `SUPPORTED_MIN = 0.70`
-- `PARTIALLY_SUPPORTED_MIN = 0.45`
-- `DEFAULT_TOP_K = 3`
-- `DEFAULT_JURISDICTION = "India"`
-
-
-
-

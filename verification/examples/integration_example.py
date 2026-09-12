@@ -8,17 +8,24 @@ Demonstrates complete data flow:
           ↓
   M5 Claim Verification Engine (`verify_claims`)
           ↓
-  M5 Verification Output Payload (Structured JSON)
+  M5 Verification Output Payload (Structured JSON + confidence + abstention)
 """
 
 import json
 import os
 import sys
 
-# Ensure parent directory is in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Ensure the repository root is in sys.path so `verification` is importable.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-from verifier import verify_claims
+from verification import (
+    calculate_abstention,
+    calculate_confidence,
+    validate_no_contradiction_detection,
+    verify_claims,
+)
 
 
 def main():
@@ -103,6 +110,23 @@ def main():
     print("[OUTPUT] M5 Verification Payload (Structured JSON):")
     print("=" * 70)
     print(json.dumps(verification_result, indent=2))
+
+    # Step 4: Independent confidence + abstention (also embedded in the payload)
+    print("\n" + "=" * 70)
+    print("[OUTPUT] Confidence summary:")
+    print("=" * 70)
+    print(
+        json.dumps(
+            {
+                "confidence": verification_result.get("confidence"),
+                "abstain": verification_result.get("abstain"),
+                "abstain_reason": verification_result.get("abstain_reason"),
+            },
+            indent=2,
+        )
+    )
+    print("\nLimitation note:")
+    print(validate_no_contradiction_detection())
 
 
 if __name__ == "__main__":

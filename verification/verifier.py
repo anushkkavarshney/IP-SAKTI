@@ -25,14 +25,21 @@ from sentence_transformers import SentenceTransformer, util
 
 from .schemas import (
     FLAG_EMPTY_CLAIM,
+    FLAG_LONG_CLAIM,
+    FLAG_MODEL_ERROR,
     FLAG_NO_EVIDENCE,
     FLAG_JURISDICTION_MISMATCH,
+    FLAG_UNKNOWN_CITATION,
     SAFETY_NOTE,
     build_claim_result,
+    deduplicate_claims,
     empty_claim_result,
+    extract_claims,
+    is_long_claim,
     normalize_claim,
     normalize_claims_payload,
     normalize_evidence_payload,
+    unknown_citation_flag_for,
     wrap_verification_payload,
 )
 from .test_cases import TEST_CASES
@@ -54,7 +61,7 @@ _model: SentenceTransformer | None = None
 
 
 def load_model() -> SentenceTransformer:
-    """Load the Sentence Transformer once and reuse it."""
+    """Load the Sentence Transformer once and reuse it (once-per-process)."""
     global _model
     if _model is None:
         print(f"Loading model: {MODEL_NAME}")
@@ -69,7 +76,7 @@ def embed_text(text: str, model: SentenceTransformer | None = None):
 
 
 def embed_texts(texts: list[str], model: SentenceTransformer | None = None):
-    """Turn many strings into embedding vectors."""
+    """Turn many strings into embedding vectors (batched)."""
     model = model or load_model()
     return model.encode(texts, convert_to_tensor=True)
 
@@ -95,6 +102,14 @@ def classify_similarity(score: float) -> str:
 
 def _evidence_text(item: dict[str, Any]) -> str:
     return (item.get("text") or "").strip()
+
+
+def _model_error_result(claim: dict[str, Any], exc: BaseException) -> dict[str, Any]:
+    return empty_claim_result(
+        claim,
+        FLAG_MODEL_ERROR,
+        f"Embedding/model error prevented verification: {type(exc).__name__}.",
+    )
 
 
 def rank_evidence(claim: str, evidence: list[dict[str, Any]], model: SentenceTransformer | None = None) -> list[dict[str, Any]]:
@@ -143,6 +158,28 @@ def deduplicate_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]
     return deduped
 
 
+def _post_process_claim_result(
+    claim_res: dict[str, Any],
+    claim: dict[str, Any],
+    best_evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply M5 flag enrichment shared by single/batch verification:
+    UNKNOWN_CITATION on the best evidence and LONG_CLAIM marking."""
+    existing = claim_res.get("flags") or []
+
+    if best_evidence:
+        authority = (best_evidence.get("authority") or "").strip()
+        unknown = unknown_citation_flag_for(authority)
+        if unknown and unknown not in existing:
+            existing.append(unknown)
+
+    if claim.get("text") and is_long_claim(claim["text"]) and FLAG_LONG_CLAIM not in existing:
+        existing.append(FLAG_LONG_CLAIM)
+
+    claim_res["flags"] = existing
+    return claim_res
+
+
 def verify_claim(
     claim: str | dict[str, Any],
     evidence: list[dict[str, Any]],
@@ -171,13 +208,19 @@ def verify_claim(
             "No evidence was provided. Semantic matching was not performed.",
         )
 
-    ranked = rank_evidence(normalized_claim["text"], evidence, model=model)
+    try:
+        ranked = rank_evidence(normalized_claim["text"], evidence, model=model)
+    except Exception as exc:  # pragma: no cover - defensive
+        return _model_error_result(normalized_claim, exc)
+
     if top_k is not None and top_k > 0:
         ranked = ranked[:top_k]
 
     best_score = ranked[0]["score"] if ranked else 0.0
+    best_evidence = ranked[0]["evidence"] if ranked else None
     status = classify_similarity(best_score)
-    return build_claim_result(normalized_claim, status, best_score, ranked, note=SAFETY_NOTE)
+    claim_res = build_claim_result(normalized_claim, status, best_score, ranked, note=SAFETY_NOTE)
+    return _post_process_claim_result(claim_res, normalized_claim, best_evidence)
 
 
 def verify_claims_batch(
@@ -187,16 +230,20 @@ def verify_claims_batch(
     top_k: int = 3,
     target_jurisdiction: str = "India",
     model: SentenceTransformer | None = None,
+    include_confidence: bool = True,
 ) -> dict[str, Any]:
     """
-    Day 2 Task 2 — Batch Claim Verification Engine.
+    Batch Claim Verification Engine.
 
     Accepts multiple claims (M3 claims payload or list) and multiple legal evidence items
-    (M4 evidence payload or list). Computes similarity vectors, ranks top-K evidence items per claim,
-    evaluates jurisdiction alignment, and returns structured verification results.
+    (M4 evidence payload or list). Computes similarity vectors, ranks top-K evidence items
+    per claim, evaluates jurisdiction alignment, applies safe abstention + confidence,
+    and returns structured verification results.
 
     `status` signifies preliminary semantic support signal only, NOT legal proof or validation.
     """
+    from .confidence import calculate_abstention, calculate_confidence
+
     model = model or load_model()
 
     normalized_claims_payload = normalize_claims_payload(claims)
@@ -205,14 +252,19 @@ def verify_claims_batch(
     claims_list = normalized_claims_payload["claims"]
     raw_evidence_list = normalized_evidence_payload["evidence"]
 
-    # Edge Case 1: No claims provided
+    # Edge Case: No claims provided
     if not claims_list:
-        return wrap_verification_payload([])
+        payload = _finalize_payload([], include_confidence=include_confidence, evidence=raw_evidence_list)
+        return payload
 
-    # Edge Case 5: Deduplicate evidence items before embedding
+    # TASK 11 — deduplicate claims before processing (empty claims are kept
+    # so the per-claim loop can flag them with FLAG_EMPTY_CLAIM)
+    claims_list = deduplicate_claims(claims_list)
+
+    # Edge Case: Deduplicate evidence items before embedding
     deduped_evidence = deduplicate_evidence(raw_evidence_list)
 
-    # Edge Case 2: No evidence provided
+    # Edge Case: No evidence provided
     if not deduped_evidence:
         verification_results = [
             empty_claim_result(
@@ -222,7 +274,7 @@ def verify_claims_batch(
             )
             for claim in claims_list
         ]
-        return wrap_verification_payload(verification_results)
+        return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
 
     # Performance optimization: pre-compute evidence embeddings for the batch
     evidence_texts = [_evidence_text(item) for item in deduped_evidence]
@@ -237,18 +289,24 @@ def verify_claims_batch(
             )
             for claim in claims_list
         ]
-        return wrap_verification_payload(verification_results)
+        return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
 
-    valid_evidence_items = [deduped_evidence[i] for i in valid_indices]
-    valid_texts = [evidence_texts[i] for i in valid_indices]
-    evidence_embeddings = embed_texts(valid_texts, model=model)
+    try:
+        valid_evidence_items = [deduped_evidence[i] for i in valid_indices]
+        valid_texts = [evidence_texts[i] for i in valid_indices]
+        evidence_embeddings = embed_texts(valid_texts, model=model)
+    except Exception as exc:  # pragma: no cover - defensive
+        verification_results = [
+            _model_error_result(claim, exc) for claim in claims_list
+        ]
+        return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
 
     verification_results: list[dict[str, Any]] = []
 
     for claim in claims_list:
         claim_text = claim["text"]
 
-        # Edge Case 3: Empty claim text
+        # Edge Case: Empty claim text
         if not claim_text:
             verification_results.append(
                 empty_claim_result(
@@ -259,42 +317,63 @@ def verify_claims_batch(
             )
             continue
 
-        claim_emb = embed_text(claim_text, model=model)
+        try:
+            claim_emb = embed_text(claim_text, model=model)
 
-        # Batch similarity calculation against evidence matrix
-        scores = util.cos_sim(claim_emb, evidence_embeddings)[0]
+            scores = util.cos_sim(claim_emb, evidence_embeddings)[0]
 
-        ranked: list[dict[str, Any]] = []
-        for idx, item in enumerate(valid_evidence_items):
-            score_val = float(scores[idx].item())
-            ranked.append({"score": round(score_val, 4), "evidence": item})
+            ranked: list[dict[str, Any]] = []
+            for idx, item in enumerate(valid_evidence_items):
+                score_val = float(scores[idx].item())
+                ranked.append({"score": round(score_val, 4), "evidence": item})
 
-        # Deterministic sorting: highest score first, then evidence_id tie-breaker
-        ranked.sort(key=lambda row: (row["score"], row["evidence"].get("id", "")), reverse=True)
+            ranked.sort(key=lambda row: (row["score"], row["evidence"].get("id", "")), reverse=True)
 
-        # Configurable Top-K slicing
-        if top_k > 0:
-            ranked = ranked[:top_k]
+            if top_k > 0:
+                ranked = ranked[:top_k]
 
-        best_score = ranked[0]["score"] if ranked else 0.0
-        status = classify_similarity(best_score)
+            best_score = ranked[0]["score"] if ranked else 0.0
+            best_evidence = ranked[0]["evidence"] if ranked else None
+            status = classify_similarity(best_score)
 
-        claim_res = build_claim_result(claim, status, best_score, ranked, note=SAFETY_NOTE)
+            claim_res = build_claim_result(claim, status, best_score, ranked, note=SAFETY_NOTE)
 
-        # Check target jurisdiction match (Edge Case 6: non-target jurisdiction evidence flag)
-        claim_jurisdiction = claim.get("jurisdiction", target_jurisdiction)
-        best_evidence_jurisdiction = (
-            ranked[0]["evidence"].get("jurisdiction", "") if ranked else ""
+            claim_jurisdiction = claim.get("jurisdiction", target_jurisdiction)
+            best_evidence_jurisdiction = best_evidence.get("jurisdiction", "") if best_evidence else ""
+
+            if best_evidence_jurisdiction and claim_jurisdiction:
+                if claim_jurisdiction.casefold() != best_evidence_jurisdiction.casefold():
+                    if FLAG_JURISDICTION_MISMATCH not in claim_res.get("flags", []):
+                        claim_res["flags"].append(FLAG_JURISDICTION_MISMATCH)
+
+            claim_res = _post_process_claim_result(claim_res, claim, best_evidence)
+            verification_results.append(claim_res)
+        except Exception as exc:  # pragma: no cover - defensive
+            verification_results.append(_model_error_result(claim, exc))
+
+    return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
+
+
+def _finalize_payload(
+    verification_results: list[dict[str, Any]],
+    *,
+    include_confidence: bool,
+    evidence: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Wrap verification results and attach M5 confidence + abstention."""
+    from .confidence import calculate_abstention, calculate_confidence
+
+    payload = wrap_verification_payload(verification_results)
+    if include_confidence:
+        confidence = calculate_confidence(verification_results, evidence=evidence)
+        abstention = calculate_abstention(
+            verification_results, evidence=evidence, confidence=confidence
         )
-
-        if best_evidence_jurisdiction and claim_jurisdiction:
-            if claim_jurisdiction.casefold() != best_evidence_jurisdiction.casefold():
-                if FLAG_JURISDICTION_MISMATCH not in claim_res.get("flags", []):
-                    claim_res["flags"].append(FLAG_JURISDICTION_MISMATCH)
-
-        verification_results.append(claim_res)
-
-    return wrap_verification_payload(verification_results)
+        payload["confidence"] = confidence
+        payload["abstain"] = abstention["abstain"]
+        payload["abstain_reason"] = abstention["abstain_reason"]
+        payload["abstain_reasons"] = abstention["reasons"]
+    return payload
 
 
 # Clean public entry point alias
