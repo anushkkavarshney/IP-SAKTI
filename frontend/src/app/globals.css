@@ -5,6 +5,8 @@
 :root {
   --background: #ffffff;
   --foreground: #1c1917;
+  --font-geist-sans: "Geist", "Inter", "Segoe UI";
+  --font-geist-mono: "Geist Mono", "SFMono-Regular", Consolas;
 }
 
 .dark {

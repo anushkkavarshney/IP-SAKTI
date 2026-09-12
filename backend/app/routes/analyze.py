@@ -1,3 +1,6 @@
+import logging
+import uuid
+
 from fastapi import APIRouter
 
 from ..schemas.requests import AnalyzeRequest
@@ -6,6 +9,7 @@ from ..services import pipeline, report_store
 from ..utils.errors import bad_request
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/analyze", response_model=FinalRoadmapResponse)
@@ -18,6 +22,10 @@ def analyze(request: AnalyzeRequest):
         clarifications=request.clarifications,
         jurisdiction=request.jurisdiction,
     )
-    session_id = report_store.save(report)
+    try:
+        session_id = report_store.save(report)
+    except RuntimeError:
+        logger.warning("Report persistence unavailable; returning transient MVP session_id")
+        session_id = str(uuid.uuid4())
     report["session_id"] = session_id
     return report
