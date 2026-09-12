@@ -1,28 +1,30 @@
 """
 PipelineService -- Member 2's orchestration layer.
-
-This calls (in order): classification_stub -> decision_router ->
-rag_adapter (Member 4) -> verification_adapter (Member 5) -> confidence
-scoring -> abstention -> final report assembly.
-
-There is deliberately NO real LLM-generation step wired in yet: Member 3's
-llm_pipeline/generator.py currently calls Member 4's retriever with the
-wrong signature (see rag_adapter.py's module docstring) and there is no
-claim-extraction module in the repo. Rather than fabricate an LLM call
-that doesn't work, or invent claim-extraction logic that belongs to
-Member 3, this pipeline builds a small number of cautious, templated
-claims (using the "may / potentially / requires further assessment"
-language Roadmap.md Section 9 requires) and sends THOSE through the real
-RAG + verification pipeline. Every fact in the final report is either:
-  (a) directly backed by retrieved evidence, or
-  (b) explicitly marked as not yet evidence-backed.
-Nothing is invented. When Member 3's real generator is fixed and wired
-up, only `build_claims()` below needs to change.
+Updated to call Member 3's real classification/routing/generation instead
+of the classification_stub/decision_router/templated-claims stopgap.
 """
 
 from typing import Dict, List
 
-from . import classification_stub, decision_router, rag_adapter, verification_adapter
+from . import rag_adapter, verification_adapter
+from llm_pipeline.classification import classify_formulation
+from llm_pipeline.routing import route as m3_route
+from llm_pipeline.generator import generate_roadmap
+
+CLARIFICATION_KEY_MAP = {
+    "intended_use": "q1",
+    "classical_heritage": "q2",
+    "novel_process": "q3",
+    "biological_resource": "q4",
+}
+
+
+def _clarifications_to_answers(clarifications):
+    return [
+        {"id": CLARIFICATION_KEY_MAP.get(k, k), "answer": v}
+        for k, v in clarifications.items()
+    ]
+
 
 CONFIDENCE_WEIGHTS = {
     "retrieval_quality": 0.30,
@@ -33,45 +35,8 @@ CONFIDENCE_WEIGHTS = {
 
 
 def clarify(description: str) -> List[Dict]:
-    return classification_stub.get_clarification_questions()
-
-
-def _build_claims(routing: Dict, classification: Dict) -> List[Dict]:
-    claims = []
-    claims.append(
-        {
-            "id": "claim_classification",
-            "text": (
-                f"This innovation, classified as {classification['category']}, "
-                f"likely falls under the {routing['regulatory_path']} regulatory pathway in India."
-            ),
-        }
-    )
-    if routing["ip_required"]:
-        claims.append(
-            {
-                "id": "claim_ip",
-                "text": (
-                    "The described innovation may involve a novel formulation or process "
-                    "that could warrant further patentability assessment."
-                ),
-            }
-        )
-    if routing["abs_check"]:
-        claims.append(
-            {
-                "id": "claim_abs",
-                "text": (
-                    "The innovation appears to use a biological resource, which may require "
-                    "Access and Benefit Sharing (ABS) review under Indian biodiversity law."
-                ),
-            }
-        )
-    return claims
-
-
-def _evidence_for(claim_text: str, top_k: int = 3) -> List[Dict]:
-    return rag_adapter.fetch_evidence(claim_text, jurisdiction="India", top_k=top_k)
+    from . import classification_stub as _stub_for_questions_only
+    return _stub_for_questions_only.get_clarification_questions()
 
 
 def _result_for_claim(claim_id: str, verification_results: List[Dict]) -> Dict:
@@ -82,8 +47,6 @@ def _result_for_claim(claim_id: str, verification_results: List[Dict]) -> Dict:
 
 
 def _to_evidence_chunk(evidence_item: Dict) -> Dict:
-    """verification/schemas.py keeps our normalized fields intact on
-    best_evidence, so we can map straight back to the frontend shape."""
     return {
         "id": evidence_item.get("id"),
         "jurisdiction": evidence_item.get("jurisdiction", "India"),
@@ -96,6 +59,7 @@ def _to_evidence_chunk(evidence_item: Dict) -> Dict:
         "text": evidence_item.get("text", ""),
     }
 
+
 STATUS_MAP = {
     "SUPPORTED": "supported",
     "PARTIALLY_SUPPORTED": "partially_supported",
@@ -104,10 +68,6 @@ STATUS_MAP = {
 
 
 def _build_items(claims: List[Dict], verification_results: List[Dict]) -> List[Dict]:
-    """Builds the per-claim detail list the frontend's ClaimVerificationTable
-    needs (verification.items). Previously this was left as None, which
-    crashed the frontend on `.map()` since the destructuring default
-    `items = []` only applies to `undefined`, not JSON `null`."""
     items = []
     for claim in claims:
         row = _result_for_claim(claim["id"], verification_results)
@@ -137,8 +97,8 @@ def _confidence(all_evidence: List[Dict], verification_results: List[Dict]) -> D
     supported_or_partial = sum(
         1 for r in verification_results if r.get("status") in ("SUPPORTED", "PARTIALLY_SUPPORTED")
     )
-    retrieval_quality = min(len(all_evidence) / 6.0, 1.0)  # rough: 6+ chunks = full score
-    source_authority = 0.0  # honest: Member 4's corpus doesn't populate authority yet
+    retrieval_quality = min(len(all_evidence) / 6.0, 1.0)
+    source_authority = 0.0
     claim_support = supported_or_partial / total
     jurisdiction_match = sum(1 for r in verification_results if r.get("jurisdiction_match")) / total
 
@@ -150,7 +110,6 @@ def _confidence(all_evidence: List[Dict], verification_results: List[Dict]) -> D
     }
     score = sum(signals[k] * CONFIDENCE_WEIGHTS[k] for k in CONFIDENCE_WEIGHTS)
     level = "HIGH" if score >= 0.7 else "MEDIUM" if score >= 0.4 else "LOW"
-    # return {"score": round(score, 2), "level": level, "signals": signals}
     note = None
     if signals["source_authority"] == 0.0 and level == "HIGH":
         level = "MEDIUM"
@@ -162,69 +121,63 @@ def _confidence(all_evidence: List[Dict], verification_results: List[Dict]) -> D
     return {"score": round(score, 2), "level": level, "signals": signals, "note": note}
 
 
+def _evidence_chunks_for_ids(evidence_by_id: Dict[str, Dict], ids: List[str]) -> List[Dict]:
+    return [_to_evidence_chunk(evidence_by_id[i]) for i in ids if i in evidence_by_id]
+
+
 def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdiction: str = "India") -> Dict:
-    category, reason, class_confidence = classification_stub.classify(innovation_description, clarifications)
-    classification = {"category": category, "reason": reason, "confidence": class_confidence}
+    clarification_answers = _clarifications_to_answers(clarifications)
+    classification = classify_formulation(innovation_description, clarification_answers)
+    routing = m3_route(classification, clarification_answers)
 
-    routing = decision_router.route(category, clarifications)
-    claims = _build_claims(routing, classification)
+    generated = generate_roadmap(
+        innovation_description, clarification_answers, classification, routing, jurisdiction=jurisdiction
+    )
 
-    all_evidence: List[Dict] = []
-    for claim in claims:
-        all_evidence.extend(_evidence_for(claim["text"]))
-    # de-dupe by id while preserving order
-    seen = set()
-    deduped_evidence = []
-    for item in all_evidence:
-        if item["id"] not in seen:
-            seen.add(item["id"])
-            deduped_evidence.append(item)
+    claims = generated["claims"]
+    all_evidence = generated["evidence"]
+    evidence_by_id = {e["id"]: e for e in all_evidence}
 
-    if deduped_evidence:
-        verification_payload = verification_adapter.verify(claims, deduped_evidence, jurisdiction=jurisdiction)
+    if claims and all_evidence:
+        verification_payload = verification_adapter.verify(claims, all_evidence, jurisdiction=jurisdiction)
         verification_results = verification_payload.get("verification", [])
         summary = verification_payload.get("summary", {})
     else:
         verification_results = []
-        summary = {"total_claims": len(claims), "supported_claims": 0, "partially_supported_claims": 0, "unsupported_claims": []}
+        summary = {
+            "total_claims": len(claims),
+            "supported_claims": 0,
+            "partially_supported_claims": 0,
+            "unsupported_claims": [],
+        }
 
-    class_row = _result_for_claim("claim_classification", verification_results)
     regulatory = {
         "jurisdiction": "India",
-        "pathway": routing["regulatory_path"],
-        "steps": [],  # [OPTIONAL ENHANCEMENT]: populate once Member 3/4 provide pathway-specific evidence
-        "evidence": [_to_evidence_chunk(class_row["best_evidence"])] if class_row.get("best_evidence") else [],
+        "pathway": generated["regulatory"].get("pathway") or routing["regulatory_path"],
+        "steps": generated["regulatory"].get("steps", []),
+        "evidence": _evidence_chunks_for_ids(evidence_by_id, generated["regulatory"].get("evidence_ids", [])),
     }
 
-    ip_row = _result_for_claim("claim_ip", verification_results)
     ip = {
-        "analysis": (
-            claims[1]["text"] if routing["ip_required"] and len(claims) > 1 else
-            "No novel-process indicator was identified from the clarification answers; IP analysis not triggered."
-        ),
-        "flags": ["novel_process_indicated"] if routing["ip_required"] else [],
-        "evidence": [_to_evidence_chunk(ip_row["best_evidence"])] if ip_row.get("best_evidence") else [],
+        "analysis": generated["ip"].get("analysis", ""),
+        "flags": generated["ip"].get("flags", []),
+        "evidence": _evidence_chunks_for_ids(evidence_by_id, generated["ip"].get("evidence_ids", [])),
     }
 
-    abs_row = _result_for_claim("claim_abs", verification_results)
     abs_result = {
-        "applicable": routing["abs_check"],
-        "analysis": (
-            next((c["text"] for c in claims if c["id"] == "claim_abs"), "")
-            if routing["abs_check"]
-            else "No biological resource was indicated; ABS review not triggered."
-        ),
-        "evidence": [_to_evidence_chunk(abs_row["best_evidence"])] if abs_row.get("best_evidence") else [],
+        "applicable": generated["abs"].get("applicable", routing["abs_check"]),
+        "analysis": generated["abs"].get("analysis", ""),
+        "evidence": _evidence_chunks_for_ids(evidence_by_id, generated["abs"].get("evidence_ids", [])),
     }
 
-    confidence = _confidence(deduped_evidence, verification_results)
+    confidence = _confidence(all_evidence, verification_results)
 
-    abstain = len(deduped_evidence) == 0 or confidence["score"] < 0.3
-    abstain_reason = None
-    if abstain:
+    abstain = generated.get("abstain", False) or len(all_evidence) == 0 or confidence["score"] < 0.3
+    abstain_reason = generated.get("abstain_reason")
+    if abstain and not abstain_reason:
         abstain_reason = (
             "Insufficient authoritative legal evidence was retrieved to support a confident roadmap. "
-            "This is a preliminary, rule-based analysis -- please consult a qualified professional."
+            "This is a preliminary, AI-generated analysis -- please consult a qualified professional."
         )
 
     return {
@@ -237,7 +190,7 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
             "supported_claims": summary.get("supported_claims", 0),
             "partially_supported_claims": summary.get("partially_supported_claims", 0),
             "unsupported_claims": [u.get("claim", "") for u in summary.get("unsupported_claims", [])],
-            "items": _build_items(claims, verification_results), 
+            "items": _build_items(claims, verification_results),
         },
         "confidence": confidence,
         "abstain": abstain,

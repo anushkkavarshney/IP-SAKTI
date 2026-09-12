@@ -158,16 +158,110 @@ def _format_answers(clarification_answers: List[Dict[str, str]]) -> str:
     return "\n".join(f"- {a['id']}: {a['answer']}" for a in clarification_answers)
 
 
+# ---------------------------------------------------------------------------
+# Retrieval + LLM generation ONLY (no re-classification/re-routing).
+# Use this from a caller (e.g. backend/pipeline.py) that already ran
+# classify_formulation()/route() itself, to avoid a duplicate LLM call.
+# ---------------------------------------------------------------------------
+
+_shared_retriever = None
+
+
+def _get_shared_retriever() -> LegalRetriever:
+    global _shared_retriever
+    if _shared_retriever is None:
+        _shared_retriever = LegalRetriever()
+    return _shared_retriever
+
+
+def generate_roadmap(
+    innovation_text: str,
+    clarification_answers: List[Dict[str, str]],
+    classification: Dict[str, Any],
+    routing_result: Dict[str, Any],
+    jurisdiction: str = "India",
+    top_k: int = 5,
+) -> Dict[str, Any]:
+    """
+    Retrieves evidence once for innovation_text and asks the LLM to generate
+    the structured ip/abs/regulatory/claims content, grounded in that
+    evidence. Does NOT call classify_formulation() or route() — the caller
+    is expected to have already decided those and pass them in, so a
+    caller like backend/pipeline.py that classifies+routes itself doesn't
+    trigger a second, redundant LLM classification call.
+    """
+    clarification_answers = clarification_answers or []
+    retriever = _get_shared_retriever()
+
+    # 1. Hybrid Retrieval (Member 4's real retriever, normalized) — single call.
+    evidence_list = _fetch_evidence(retriever, innovation_text, jurisdiction=jurisdiction, top_k=top_k)
+
+    # 2. Guardrail pre-check: is there any evidence to ground on?
+    grounding = verify_grounding(innovation_text, evidence_list)
+
+    # 3. LLM Structured Generation (Sections 18, 24, 33)
+    user_prompt = ROADMAP_GENERATION_PROMPT_TEMPLATE.format(
+        innovation_text=innovation_text,
+        clarification_answers=_format_answers(clarification_answers),
+        classification=classification,
+        routing=routing_result,
+        retrieved_evidence=_format_evidence_for_generation(evidence_list),
+    )
+
+    try:
+        generated = call_llm_json(SYSTEM_PROMPT_ROADMAP_GENERATOR, user_prompt)
+    except (ValueError, RuntimeError) as e:
+        # Safe abstention at generation stage (Section 22) —
+        # never silently fail, return an explicit abstain flag instead.
+        return {
+            "ip": {"analysis": "", "flags": [], "evidence_ids": []},
+            "abs": {"applicable": False, "analysis": "", "evidence_ids": []},
+            "regulatory": {"jurisdiction": jurisdiction, "pathway": "", "steps": [], "evidence_ids": []},
+            "claims": [],
+            "evidence": evidence_list,
+            "grounding": grounding,
+            "abstain": True,
+            "abstain_reason": f"Generation failed: {e}",
+            "disclaimer": (
+                "This output is AI-generated decision support, not legal advice. "
+                "Please consult a qualified patent attorney or regulatory expert."
+            ),
+        }
+
+    # 4. Guardrail post-check: flag any absolute/guarantee language
+    cautious_check = check_cautious_language(generated)
+
+    return {
+        "ip": generated.get("ip", {"analysis": "", "flags": [], "evidence_ids": []}),
+        "abs": generated.get("abs", {"applicable": False, "analysis": "", "evidence_ids": []}),
+        "regulatory": generated.get(
+            "regulatory", {"jurisdiction": jurisdiction, "pathway": "", "steps": [], "evidence_ids": []}
+        ),
+        "claims": generated.get("claims", []),
+        "evidence": evidence_list,
+        "grounding": grounding,
+        "cautious_language_check": cautious_check,
+        "abstain": not grounding["grounded"],
+        "abstain_reason": None if grounding["grounded"] else grounding["note"],
+        "disclaimer": (
+            "This output is AI-generated decision support, not legal advice. "
+            "Please consult a qualified patent attorney or regulatory expert "
+            "before taking formal action."
+        ),
+    }
+
+
 class RoadmapOrchestrator:
     """
-    This is the Section 4 pipeline, owned end-to-end by Member 3:
-
-        Classification -> Decision Router -> Hybrid Retrieval (M4) ->
-        LLM Structured Generation -> (handed off to M5 for verification)
+    Convenience wrapper for STANDALONE use/testing (e.g. running this file
+    directly). Does the full Section 4 pipeline including classification
+    and routing. Backend integrations that already classify+route
+    themselves should call generate_roadmap() directly instead, to avoid
+    a duplicate classification LLM call — see backend/app/services/pipeline.py.
     """
 
     def __init__(self):
-        self.retriever = LegalRetriever()
+        self.retriever = _get_shared_retriever()
 
     def build_roadmap_draft(
         self,
@@ -177,73 +271,13 @@ class RoadmapOrchestrator:
         top_k: int = 5,
     ) -> Dict[str, Any]:
         clarification_answers = clarification_answers or []
-
-        # 1. Classification (Section 6)
         classification = classify_formulation(innovation_text, clarification_answers)
-
-        # 2. Decision Router (Section 8)
         routing_result = route(classification, clarification_answers)
-
-        # 3. Hybrid Retrieval (Member 4's real retriever, normalized)
-        evidence_list = _fetch_evidence(self.retriever, innovation_text, jurisdiction=jurisdiction, top_k=top_k)
-
-        # 4. Guardrail pre-check: is there any evidence to ground on?
-        grounding = verify_grounding(innovation_text, evidence_list)
-
-        # 5. LLM Structured Generation (Sections 18, 24, 33)
-        user_prompt = ROADMAP_GENERATION_PROMPT_TEMPLATE.format(
-            innovation_text=innovation_text,
-            clarification_answers=_format_answers(clarification_answers),
-            classification=classification,
-            routing=routing_result,
-            retrieved_evidence=_format_evidence_for_generation(evidence_list),
+        result = generate_roadmap(
+            innovation_text, clarification_answers, classification, routing_result,
+            jurisdiction=jurisdiction, top_k=top_k,
         )
-
-        try:
-            generated = call_llm_json(SYSTEM_PROMPT_ROADMAP_GENERATOR, user_prompt)
-        except (ValueError, RuntimeError) as e:
-            # Safe abstention at generation stage (Section 22) —
-            # never silently fail, return an explicit abstain flag instead.
-            return {
-                "classification": classification,
-                "routing": routing_result,
-                "ip": {"analysis": "", "flags": [], "evidence_ids": []},
-                "abs": {"applicable": False, "analysis": "", "evidence_ids": []},
-                "regulatory": {"jurisdiction": jurisdiction, "pathway": "", "steps": [], "evidence_ids": []},
-                "claims": [],
-                "evidence": evidence_list,
-                "grounding": grounding,
-                "abstain": True,
-                "abstain_reason": f"Generation failed: {e}",
-                "disclaimer": (
-                    "This output is AI-generated decision support, not legal advice. "
-                    "Please consult a qualified patent attorney or regulatory expert."
-                ),
-            }
-
-        # 6. Guardrail post-check: flag any absolute/guarantee language
-        cautious_check = check_cautious_language(generated)
-
-        return {
-            "classification": classification,
-            "routing": routing_result,
-            "ip": generated.get("ip", {"analysis": "", "flags": [], "evidence_ids": []}),
-            "abs": generated.get("abs", {"applicable": False, "analysis": "", "evidence_ids": []}),
-            "regulatory": generated.get(
-                "regulatory", {"jurisdiction": jurisdiction, "pathway": "", "steps": [], "evidence_ids": []}
-            ),
-            "claims": generated.get("claims", []),
-            "evidence": evidence_list,
-            "grounding": grounding,
-            "cautious_language_check": cautious_check,
-            "abstain": not grounding["grounded"],
-            "abstain_reason": None if grounding["grounded"] else grounding["note"],
-            "disclaimer": (
-                "This output is AI-generated decision support, not legal advice. "
-                "Please consult a qualified patent attorney or regulatory expert "
-                "before taking formal action."
-            ),
-        }
+        return {"classification": classification, "routing": routing_result, **result}
 
 
 if __name__ == "__main__":
