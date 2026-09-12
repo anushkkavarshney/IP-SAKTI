@@ -63,9 +63,9 @@ def _normalize_evidence(raw_results: List[dict]) -> List[Dict[str, Any]]:
                 "legal_domain": item.get("category") or NOT_PROVIDED,
                 "document_name": item.get("act_name") or NOT_PROVIDED,
                 "section": item.get("section") or NOT_PROVIDED,
-                "authority": NOT_PROVIDED,
+                "authority": item.get("authority") or NOT_PROVIDED,
                 "effective_date": item.get("as_of_date"),
-                "source_url": NOT_PROVIDED,
+                "source_url": item.get("source_url") or NOT_PROVIDED,
                 "text": item.get("content") or "",
             }
         )
