@@ -23,6 +23,7 @@ export type ApiErrorKind =
   | "http"
   | "empty"
   | "malformed"
+  | "unavailable"
   | "unknown";
 
 export class ApiError extends Error {
@@ -56,6 +57,8 @@ export function apiErrorMessage(err: unknown): string {
         return "The analysis service returned an unexpected response.";
       case "empty":
         return "The analysis service returned an empty response.";
+      case "unavailable":
+        return err.message;
       case "malformed":
         return "The analysis service returned an incomplete or unexpected response.";
       default:
@@ -73,6 +76,8 @@ export function apiErrorTitle(err: unknown): string {
         return "Analysis service unavailable";
       case "http":
         return "Analysis could not be completed";
+      case "unavailable":
+        return "Analysis service unavailable";
       case "empty":
       case "malformed":
         return "Incomplete response from the analysis service";
@@ -192,6 +197,33 @@ export interface AnalyzeResult {
   isLiveBackend: boolean;
 }
 
+const SERVICE_UNAVAILABLE_MARKERS = [
+  "service is currently unavailable",
+  "Classification/generation service unavailable",
+  "missing dependency or API key",
+] as const;
+
+/**
+ * The backend's _llm_unavailable_report() is an all-zero abstain object it
+ * returns with HTTP 200 when the LLM dependency/API key is missing. It is an
+ * infrastructure failure, not a genuine abstention, so we surface it as an
+ * error and let the user retry or opt into sample data.
+ */
+function isServiceUnavailableReport(report: FinalRoadmapResponse): boolean {
+  const haystack = [
+    report.abstain_reason || "",
+    report.classification.reason || "",
+  ]
+    .join("\n")
+    .toLowerCase();
+  return (
+    report.abstain === true &&
+    SERVICE_UNAVAILABLE_MARKERS.some((marker) =>
+      haystack.includes(marker.toLowerCase())
+    )
+  );
+}
+
 /**
  * Submit a complete payload to POST /analyze.
  *
@@ -213,6 +245,13 @@ export async function analyzeInnovation(
 
   if (!isRoadmapResponse(data)) {
     throw new ApiError("malformed", "Analyze response did not match the roadmap contract.");
+  }
+
+  if (isServiceUnavailableReport(data)) {
+    throw new ApiError(
+      "unavailable",
+      "The backend is reachable, but its LLM classification service can't start because the groq dependency or GROQ_API_KEY is missing. Retry once it's configured, or use sample data to see the demo roadmap now. Sample data is clearly marked as illustrative and is never presented as a live result."
+    );
   }
 
   return { report: data, isLiveBackend: true };

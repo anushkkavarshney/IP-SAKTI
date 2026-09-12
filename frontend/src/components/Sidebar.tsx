@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   Scale,
@@ -82,20 +83,20 @@ export default function Sidebar({ isOpen, onClose, onOpenDisclaimer }: SidebarPr
 
       <aside
         className={`fixed bottom-0 left-0 top-0 z-40 flex w-72 flex-col border-r border-stone-200 bg-white transition-transform duration-300 ease-in-out dark:border-stone-800 dark:bg-stone-900 ${
-          isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+          isOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="flex h-16 items-center justify-between border-b border-stone-200 px-5 dark:border-stone-800">
           <Link href="/home" onClick={onClose} className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 text-white shadow-xs">
-              <Scale className="h-5 w-5" />
+            <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 shadow-xs">
+              <Image src="/favicon.jpeg" alt="" fill sizes="36px" className="object-cover" />
             </div>
             <div>
               <span className="block text-sm font-bold text-stone-900 dark:text-white">
                 IP-SAKTI <span className="text-amber-600 dark:text-amber-500">Navigator</span>
               </span>
               <p className="text-[10px] text-stone-500 dark:text-stone-400">
-                SIH 2026 · PS SIH26045
+                Evidence-first decision support
               </p>
             </div>
           </Link>

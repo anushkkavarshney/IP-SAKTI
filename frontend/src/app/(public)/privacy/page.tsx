@@ -4,7 +4,7 @@ const SECTIONS = [
   {
     icon: Info,
     title: "What we collect",
-    body: "IP-SAKTI Navigator is a Smart India Hackathon demonstration. Please do not enter confidential business information or personal data into the system. Data you enter (your innovation description, assessment answers) is stored only in your own browser's local storage for this session and is not sent to any analytics or tracking service.",
+    body: "IP-SAKTI Navigator is a demonstration build. Please do not enter confidential business information or personal data into the system. Data you enter (your innovation description, assessment answers) is stored only in your own browser's local storage for this session and is not sent to any analytics or tracking service.",
   },
   {
     icon: Database,

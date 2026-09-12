@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
-  Scale,
   ArrowRight,
   ArrowLeft,
   Mail,
@@ -52,8 +52,8 @@ export default function LoginPage() {
       <div className="mx-auto flex max-w-md flex-col px-4 py-14 sm:px-6">
         <div className="rounded-3xl border border-stone-200 bg-white p-8 shadow-sm dark:border-stone-800 dark:bg-stone-900">
           <div className="flex flex-col items-center text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-600 to-emerald-700 text-white shadow-md">
-              <Scale className="h-6 w-6" />
+            <div className="relative flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-tr from-amber-600 to-emerald-700 shadow-md">
+              <Image src="/favicon.jpeg" alt="" fill sizes="48px" className="object-cover" />
             </div>
             <h1 className="mt-4 text-xl font-bold tracking-tight text-stone-900 dark:text-white">
               Welcome to IP-SAKTI Navigator

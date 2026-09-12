@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { ShieldCheck, Scale, Menu, LogOut } from "lucide-react";
+import { ShieldCheck, Menu, LogOut } from "lucide-react";
 import { useAuth } from "../lib/auth";
 
 interface NavbarProps {
+  isSidebarOpen?: boolean;
   onToggleSidebar: () => void;
   onOpenDisclaimer: () => void;
 }
@@ -19,6 +21,7 @@ const PAGE_TITLES: Record<string, string> = {
 };
 
 export default function Navbar({
+  isSidebarOpen = true,
   onToggleSidebar,
   onOpenDisclaimer,
 }: NavbarProps) {
@@ -35,7 +38,11 @@ export default function Navbar({
 
   return (
     <header className="sticky top-0 z-30 w-full border-b border-stone-200 bg-white/95 backdrop-blur-md dark:border-stone-800 dark:bg-stone-950/95 print:hidden">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <div
+        className={`mx-auto flex h-16 max-w-7xl items-center justify-between px-4 transition-[padding] duration-300 sm:px-6 lg:px-8 ${
+          isSidebarOpen ? "lg:pl-72" : ""
+        }`}
+      >
         <div className="flex items-center gap-3">
           <button
             onClick={onToggleSidebar}
@@ -48,10 +55,10 @@ export default function Navbar({
           <div className="flex items-center gap-2.5">
             <Link
               href="/home"
-              className="hidden h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 text-white shadow-xs sm:flex"
+              className="relative hidden h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 shadow-xs sm:flex"
               aria-label="Go to home"
             >
-              <Scale className="h-5 w-5" />
+              <Image src="/favicon.jpeg" alt="" fill sizes="36px" className="object-cover" />
             </Link>
             <div>
               <h1 className="text-base font-bold tracking-tight text-stone-900 dark:text-white">
@@ -65,10 +72,6 @@ export default function Navbar({
         </div>
 
         <div className="flex items-center gap-2.5">
-          <span className="hidden rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold text-amber-800 sm:inline dark:bg-amber-950 dark:text-amber-300">
-            SIH 2026
-          </span>
-
           <button
             onClick={onOpenDisclaimer}
             className="flex items-center gap-1 rounded-xl border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-50 hover:text-stone-900 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300 dark:hover:bg-stone-700"

@@ -1,7 +1,5 @@
 # IP-SAKTI Navigator — Frontend (Member 1)
 
-**SIH 2026 · Problem Statement SIH26045**
-
 AI-powered decision-support platform for Ayurvedic innovators that converts a plain-language innovation description into an evidence-backed IP, biodiversity/ABS, and regulatory commercialization roadmap.
 
 ---

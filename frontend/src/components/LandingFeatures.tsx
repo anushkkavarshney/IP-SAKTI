@@ -44,8 +44,8 @@ export default function LandingFeatures() {
             Four checks before any recommendation
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-stone-600 dark:text-stone-400">
-            Built for the Smart India Hackathon, scoped to Indian statutes, and
-            deliberately conservative about what it claims.
+            Scoped to Indian statutes, evidence-first, and deliberately
+            conservative about what it claims.
           </p>
         </div>
 

@@ -12,7 +12,7 @@ export default function LandingHero() {
         <div className="mx-auto max-w-3xl text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-white/80 px-3.5 py-1 text-xs font-semibold text-stone-600 shadow-xs dark:border-stone-700 dark:bg-stone-900/80 dark:text-stone-300">
             <Scale className="h-3.5 w-3.5 text-amber-600" />
-            Smart India Hackathon 2026 · Problem Statement SIH26045
+            Evidence-first · India-scoped · Safe abstention
           </div>
 
           <h1 className="mt-6 text-4xl font-extrabold tracking-tight text-stone-900 dark:text-white sm:text-5xl">

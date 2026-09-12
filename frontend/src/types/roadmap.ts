@@ -1,6 +1,6 @@
 /**
  * Shared Type Definitions for IP-SAKTI Navigator
- * Strictly aligned with roadmap.md (Master AI Working Brief - SIH 2026 Problem Statement SIH26045)
+ * Strictly aligned with roadmap.md (Master AI Working Brief)
  */
 
 export type FormulationCategory =

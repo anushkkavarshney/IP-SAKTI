@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { Scale, Menu, X, LogIn, Sparkles } from "lucide-react";
+import { Menu, X, LogIn, Sparkles } from "lucide-react";
 import { useAuth } from "../lib/auth";
 
 const NAV_LINKS = [
@@ -30,8 +31,8 @@ export default function PublicNavbar() {
             className="flex items-center gap-2.5 rounded-lg focus:outline-hidden focus-visible:ring-2 focus-visible:ring-amber-500"
             aria-label="IP-SAKTI Navigator home"
           >
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 text-white shadow-xs">
-              <Scale className="h-5 w-5" />
+            <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 shadow-xs">
+              <Image src="/favicon.jpeg" alt="" fill sizes="36px" className="object-cover" />
             </div>
             <div className="hidden sm:block">
               <span className="block text-sm font-bold tracking-tight text-stone-900 dark:text-white">

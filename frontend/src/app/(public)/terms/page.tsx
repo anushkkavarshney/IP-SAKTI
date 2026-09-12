@@ -15,7 +15,7 @@ const SECTIONS = [
   },
   {
     title: "No confidential information",
-    body: "The demo accepts any non-empty credentials and stores data locally in your browser only. Do not enter confidential, sensitive, or personal information. This project is a Smart India Hackathon 2026 prototype (PS SIH26045) by a student team.",
+    body: "The demo accepts any non-empty credentials and stores data locally in your browser only. Do not enter confidential, sensitive, or personal information. This project is a demonstration prototype by a student team.",
   },
 ];
 

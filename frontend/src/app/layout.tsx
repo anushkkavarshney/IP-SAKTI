@@ -17,7 +17,11 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "IP-SAKTI Navigator | Ayurvedic IP & Regulatory Roadmaps",
   description:
-    "Turn an Ayurvedic innovation into an evidence-backed IP and regulatory roadmap. Decision-support for the Smart India Hackathon 2026, problem statement SIH26045.",
+    "Turn an Ayurvedic innovation into an evidence-backed IP and regulatory roadmap. Evidence-first decision support scoped to Indian statutes.",
+  icons: {
+    icon: "/favicon.jpeg",
+    apple: "/favicon.jpeg",
+  },
 };
 
 export default function RootLayout({

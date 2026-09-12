@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Scale, ShieldCheck, ArrowRight } from "lucide-react";
+import Image from "next/image";
+import { ShieldCheck, ArrowRight } from "lucide-react";
 import DisclaimerModal from "./DisclaimerModal";
 
 export default function PublicFooter() {
@@ -14,8 +15,8 @@ export default function PublicFooter() {
         <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
           <div className="sm:col-span-2 lg:col-span-1">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 text-white shadow-xs">
-                <Scale className="h-5 w-5" />
+              <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-tr from-amber-600 to-emerald-700 shadow-xs">
+                <Image src="/favicon.jpeg" alt="" fill sizes="36px" className="object-cover" />
               </div>
               <span className="text-sm font-bold text-stone-900 dark:text-white">
                 IP-SAKTI <span className="text-amber-600 dark:text-amber-500">Navigator</span>
@@ -121,7 +122,7 @@ export default function PublicFooter() {
         </div>
 
         <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-stone-200 pt-6 text-[11px] text-stone-400 dark:border-stone-800 dark:text-stone-500 sm:flex-row">
-          <span>© 2026 IP-SAKTI Navigator · Smart India Hackathon 2026 (PS SIH26045)</span>
+          <span>© 2026 IP-SAKTI Navigator</span>
           <span>Not legal advice · Decision support only</span>
         </div>
       </div>
