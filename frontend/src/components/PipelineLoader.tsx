@@ -9,18 +9,18 @@ interface PipelineLoaderProps {
 const STAGES = [
   {
     icon: Sparkles,
-    title: "Submitting your analysis",
-    desc: "Sending your description and answers to the analysis service.",
+    title: "Analyzing your innovation...",
+    desc: "Classifying the formulation and routing it to the relevant legal domains.",
   },
   {
     icon: Search,
-    title: "Waiting for the analysis service",
-    desc: "The server is classifying, routing, and retrieving Indian statutory evidence. Large jobs can take a minute or two.",
+    title: "Retrieving relevant Indian legal evidence...",
+    desc: "Searching the statutory corpus (IP, ABS, regulatory) for your innovation profile.",
   },
   {
     icon: ShieldCheck,
-    title: "Receiving the evidence-backed result",
-    desc: "Your roadmap is being prepared — this stage ends as soon as the service responds.",
+    title: "Verifying claims and preparing your roadmap...",
+    desc: "Cross-checking each generated claim against retrieved evidence and computing confidence.",
   },
 ];
 

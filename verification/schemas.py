@@ -126,11 +126,22 @@ def _first_present(item: dict[str, Any], keys: list[str], default: str = "") -> 
     return default
 
 
+_AUTHORITY_PLACEHOLDER_PHRASES = (
+    "not provided",
+    "not listed",
+    "not available",
+    "not yet available",
+)
+
+
 def _is_known_authority(authority: str) -> bool:
     """Check whether a string matches a known Indian legal authority.
-    Empty/blank input is never treated as a known authority."""
+    Empty/blank input and placeholder values ("Not provided", "unknown",
+    etc.) are never treated as a known authority."""
     normed = (authority or "").strip().casefold()
     if not normed:
+        return False
+    if any(phrase in normed for phrase in _AUTHORITY_PLACEHOLDER_PHRASES):
         return False
     return any(known in normed or normed in known for known in KNOWN_AUTHORITIES)
 

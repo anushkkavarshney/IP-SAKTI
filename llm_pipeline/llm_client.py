@@ -22,6 +22,13 @@ except ImportError:
 
 _client = None
 
+# Bounded per-operation timeout: an explicit client-level timeout keeps a
+# degraded/slow Groq connection from stalling (the SDK's own read default is
+# already 60s, but with up to 2 built-in retries a bad network could otherwise
+# multiply that into several minutes). The frontend aborts /analyze at 120s,
+# so a ~60s per-LLM-operation budget fails clearly instead of hanging.
+GROQ_TIMEOUT_S = 60.0
+
 
 def get_client() -> Groq:
     global _client
@@ -31,7 +38,7 @@ def get_client() -> Groq:
             raise RuntimeError(
                 "GROQ_API_KEY not set. Add it to your environment / .env file."
             )
-        _client = Groq(api_key=api_key)
+        _client = Groq(api_key=api_key, timeout=GROQ_TIMEOUT_S)
     return _client
 
 

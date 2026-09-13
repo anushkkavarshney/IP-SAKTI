@@ -112,10 +112,34 @@ async function fetchJson(url: string, options: FetchOptions): Promise<unknown> {
     externalSignal.addEventListener("abort", onAbort, { once: true });
   }
 
-  let res: Response;
   try {
-    res = await fetch(url, { ...options, signal: controller.signal });
-  } catch {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+
+    let text: string;
+    try {
+      text = await res.text();
+    } catch {
+      if (controller.signal.aborted) {
+        throw new ApiError("timeout", "Request timed out.");
+      }
+      throw new ApiError("network", NETWORK_ERROR_WORD);
+    }
+
+    if (!res.ok) {
+      throw new ApiError("http", `HTTP ${res.status}`, res.status);
+    }
+
+    if (!text.trim()) {
+      throw new ApiError("empty", "Empty response body.");
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new ApiError("malformed", "Response body was not valid JSON.");
+    }
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
     if (externallyAborted) {
       throw new ApiError("aborted", "Request was cancelled.");
     }
@@ -126,23 +150,6 @@ async function fetchJson(url: string, options: FetchOptions): Promise<unknown> {
   } finally {
     clearTimeout(timer);
   }
-
-  if (!res.ok) {
-    throw new ApiError("http", `HTTP ${res.status}`, res.status);
-  }
-
-  const text = await res.text();
-  if (!text.trim()) {
-    throw new ApiError("empty", "Empty response body.");
-  }
-
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new ApiError("malformed", "Response body was not valid JSON.");
-  }
-  return data;
 }
 
 function isRoadmapResponse(value: unknown): value is FinalRoadmapResponse {

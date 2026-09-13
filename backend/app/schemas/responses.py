@@ -128,6 +128,7 @@ class FinalRoadmapResponse(BaseModel):
     confidence: ConfidenceResult
     abstain: bool
     abstain_reason: Optional[str] = None
+    abstain_reasons: List[str] = Field(default_factory=list)
     expert_escalation: Optional[ExpertEscalation] = None
     # Extra field, not in the frontend type but harmless to include (TS only
     # checks the fields it reads) -- lets /report/{id} retrieve this later.

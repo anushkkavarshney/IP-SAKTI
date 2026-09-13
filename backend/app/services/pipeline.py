@@ -64,6 +64,41 @@ logger = logging.getLogger("ip_sakti_backend")
 
 NOT_PROVIDED = "Not provided by the legal corpus yet"
 
+# Answers that carry no usable information for classification/routing — they
+# mean "I don't know" and must NOT be counted toward input completeness.
+_VAGUE_ANSWER_TOKENS = {
+    "not sure",
+    "unsure",
+    "i don't know",
+    "i do not know",
+    "dont know",
+    "don't know",
+    "n/a",
+    "na",
+    "none",
+    "tbd",
+}
+
+
+# Map each classification category to the legal_domain strings the RELEVANT
+# retrieved evidence must carry (corpus categories, verified against
+# rag_engine/processed_data/corpus.json: ABS_BIODIVERSITY, IP_PATENT,
+# REGULATORY_AYUSH, REGULATORY_COSMETICS, REGULATORY_NUTRACEUTICAL).
+# unknown_insufficient_information maps to [] — with no known product type we
+# cannot confirm any domain coverage, so on-domain evidence matching scores 0.
+_CATEGORY_TO_REQUIRED_DOMAINS: Dict[str, List[str]] = {
+    "classical_ayurvedic_medicine": ["REGULATORY_AYUSH", "ABS_BIODIVERSITY"],
+    "proprietary_ayurvedic_medicine": [
+        "REGULATORY_AYUSH",
+        "ABS_BIODIVERSITY",
+        "IP_PATENT",
+    ],
+    "phytopharmaceutical": ["IP_PATENT", "ABS_BIODIVERSITY", "REGULATORY_AYUSH"],
+    "nutraceutical": ["REGULATORY_NUTRACEUTICAL"],
+    "cosmetic": ["REGULATORY_COSMETICS"],
+    "unknown_insufficient_information": [],
+}
+
 # --- Defensive import of Member 3's LLM pipeline ---------------------------
 _LLM_IMPORT_ERROR = None
 try:
@@ -77,6 +112,11 @@ except Exception as exc:  # pragma: no cover -- defensive; env may lack `groq` /
     generate_roadmap = None
     m3_get_questions = None
     _LLM_IMPORT_ERROR = exc
+    # Never silently swallow a startup-class failure: surface the real cause
+    # (e.g. "No module named 'rank_bm25'") in the server logs while keeping the
+    # honest safe-abstention behavior for clients (we do NOT fake analysis).
+    logger.warning("LLM pipeline unavailable -- classification/generation will degrade to safe abstention")
+    logger.exception("Failed to initialize LLM pipeline")
 
 
 CATEGORY_DISPLAY_MAP = {
@@ -139,6 +179,31 @@ def _clarifications_to_answers(clarifications: Dict[str, str]) -> List[Dict]:
     (q1..q5) as field_key, so the dict the frontend submits is already
     keyed exactly how classify_formulation()/route() expect it."""
     return [{"id": k, "answer": v} for k, v in clarifications.items()]
+
+
+def _compute_input_completeness(clarifications: Dict[str, str]) -> float:
+    """Fraction (0..1) of clarification answers that are genuinely
+    informative. 'Not sure' / 'unsure' / empty / placeholder answers carry no
+    usable signal and are NOT counted — a mostly-'Not sure' input is too vague
+    for the system to classify reliably (feeds M5's insufficient_input gate).
+
+    q5 (jurisdiction) defaults to 'India' in the UI, so it is informative
+    when present unless it is itself a vague token."""
+    values = [str(v or "").strip().casefold() for v in clarifications.values()]
+    informative = sum(
+        1 for v in values if v and v not in _VAGUE_ANSWER_TOKENS
+    )
+    total = len(values)
+    if total == 0:
+        return 0.0
+    return round(informative / total, 2)
+
+
+def _required_domains_for_category(category: str) -> List[str]:
+    """Legal-domain expectations for an M3 classification category.
+    Unknown/insufficient categories yield an empty list — the system cannot
+    confirm ANY domain coverage, which M5 scores as zero on-domain evidence."""
+    return list(_CATEGORY_TO_REQUIRED_DOMAINS.get(category or "", []))
 
 
 def _result_for_claim(claim_id: str, verification_results: List[Dict]) -> Dict:
@@ -305,13 +370,30 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
     all_evidence = generated["evidence"]
     evidence_by_id = {e["id"]: e for e in all_evidence}
 
-        # Debugging fix (2026-09-13): "confidence always 0" with no exception
+    # --- Evidence-sufficiency context for M5 safe abstention ---------------
+    # 1. input_completeness: fraction of informative clarification answers.
+    #    Vague/miracle inputs answer mostly "Not sure" → low → M5 abstains.
+    # 2. required_domains: legal domains expected for this product type. An
+    #    unknown product type → empty list → M5 scores on-domain evidence as
+    #    0 and the classification_unknown gate forces abstention.
+    input_completeness = _compute_input_completeness(clarifications)
+    required_domains = _required_domains_for_category(
+        raw_classification.get("category", "unknown_insufficient_information")
+    )
+
+    # Debugging fix (2026-09-13): "confidence always 0" with no exception
     # anywhere means this branch below is silently taking the fallback path
     # -- almost certainly because generate_roadmap()'s internal RAG call
     # (Member 4) returned zero evidence for the query. Logging the actual
     # counts here turns "confidence is 0, no idea why" into a concrete
     # number instead of a guess.
     print(f"[DEBUG] analyze(): {len(claims)} claims, {len(all_evidence)} evidence chunks from generate_roadmap()")
+    logger.info(
+        "analyze(): input_completeness=%s category=%s required_domains=%s",
+        input_completeness,
+        raw_classification.get("category"),
+        required_domains,
+    )
 
     if claims and all_evidence:
         # verify() now returns confidence + abstention computed by Member 5
@@ -320,7 +402,14 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
         # ever a stand-in because nothing existed yet. M5's version does
         # real authority-list scoring and citation-integrity checks that
         # backend could not replicate.
-        verification_payload = verification_adapter.verify(claims, all_evidence, jurisdiction=jurisdiction)
+        verification_payload = verification_adapter.verify(
+            claims,
+            all_evidence,
+            jurisdiction=jurisdiction,
+            classification=raw_classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
+        )
     else:
         verification_payload = _fallback_verification_payload(claims)
 
@@ -362,7 +451,10 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
     m5_abstain_reason = verification_payload.get("abstain_reason")
 
     abstain = generated.get("abstain", False) or m5_abstain or guardrail_violation
+    abstain_reasons = list(verification_payload.get("abstain_reasons") or [])
     if guardrail_violation:
+        if "guardrail_violation" not in abstain_reasons:
+            abstain_reasons = ["guardrail_violation"] + abstain_reasons
         abstain_reason = (
             "The generated analysis used language that reads as a binding guarantee "
             "rather than cautious decision support, so it's being withheld pending review. "
@@ -393,4 +485,5 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
         "confidence": confidence,
         "abstain": abstain,
         "abstain_reason": abstain_reason,
+        "abstain_reasons": abstain_reasons,
     }

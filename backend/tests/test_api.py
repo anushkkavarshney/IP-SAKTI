@@ -31,7 +31,7 @@ def test_clarify_returns_questions():
     body = res.json()
     assert len(body["questions"]) == 5
     assert body["questions"][0]["field_key"] == "q1"
-    assert body["questions"][-1]["allow_text"] is True  # q5 is free-text jurisdiction
+    assert body["questions"][-1]["allow_text"] is False  # q5 is presented as a clickable "India" option (frontend has no free-text input UI; see pipeline.py clarify() notes)
 
 
 def test_analyze_rejects_empty_description():

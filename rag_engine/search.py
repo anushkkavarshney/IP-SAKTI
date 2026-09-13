@@ -3,6 +3,7 @@ import os
 import re
 import hashlib
 import pickle
+from pathlib import Path
 import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
@@ -15,7 +16,11 @@ def _tokenize(text):
 
 
 class LegalSearchEngine:
-    def __init__(self, corpus_path="rag_engine/processed_data/corpus.json"):
+    def __init__(self, corpus_path=None):
+        if corpus_path is None:
+            # Module-relative default so CWD never matters (uvicorn from repo
+            # root, pytest from backend/tests, or a direct script run all work).
+            corpus_path = str(Path(__file__).resolve().parent / "processed_data" / "corpus.json")
         with open(corpus_path, "r", encoding="utf-8") as f:
             self.corpus = json.load(f)
 

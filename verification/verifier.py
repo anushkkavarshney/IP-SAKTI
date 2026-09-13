@@ -278,6 +278,9 @@ def verify_claims_batch(
     target_jurisdiction: str = "India",
     model: SentenceTransformer | None = None,
     include_confidence: bool = True,
+    classification: Any = None,
+    input_completeness: float | None = None,
+    required_domains: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Batch Claim Verification Engine.
@@ -288,6 +291,13 @@ def verify_claims_batch(
     and returns structured verification results.
 
     `status` signifies preliminary semantic support signal only, NOT legal proof or validation.
+
+    Optional evidence-sufficiency context (used by the confidence / safe
+    abstention engine):
+      classification     — the M3 classification result (or category string).
+      input_completeness — fraction (0..1) of informative clarification answers.
+      required_domains   — legal domains expected for this product type; an
+                           empty list means the product type is unknown.
     """
     from .confidence import calculate_abstention, calculate_confidence
 
@@ -301,7 +311,14 @@ def verify_claims_batch(
 
     # Edge Case: No claims provided
     if not claims_list:
-        payload = _finalize_payload([], include_confidence=include_confidence, evidence=raw_evidence_list)
+        payload = _finalize_payload(
+            [],
+            include_confidence=include_confidence,
+            evidence=raw_evidence_list,
+            classification=classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
+        )
         return payload
 
     # TASK 11 — deduplicate claims before processing (empty claims are kept
@@ -329,7 +346,14 @@ def verify_claims_batch(
             )
             for claim in claims_list
         ]
-        return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
+        return _finalize_payload(
+            verification_results,
+            include_confidence=include_confidence,
+            evidence=raw_evidence_list,
+            classification=classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
+        )
 
     # Performance optimization: pre-compute evidence embeddings for the batch
     evidence_texts = [_evidence_text(item) for item in deduped_evidence]
@@ -348,7 +372,14 @@ def verify_claims_batch(
             )
             for claim in claims_list
         ]
-        return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
+        return _finalize_payload(
+            verification_results,
+            include_confidence=include_confidence,
+            evidence=raw_evidence_list,
+            classification=classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
+        )
 
     try:
         valid_evidence_items = [deduped_evidence[i] for i in valid_indices]
@@ -359,7 +390,14 @@ def verify_claims_batch(
             _attach_citation_info(_model_error_result(claim, exc), claim, valid_evidence_ids)
             for claim in claims_list
         ]
-        return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
+        return _finalize_payload(
+            verification_results,
+            include_confidence=include_confidence,
+            evidence=raw_evidence_list,
+            classification=classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
+        )
 
     verification_results: list[dict[str, Any]] = []
 
@@ -417,7 +455,14 @@ def verify_claims_batch(
         except Exception as exc:  # pragma: no cover - defensive
             verification_results.append(_model_error_result(claim, exc))
 
-    return _finalize_payload(verification_results, include_confidence=include_confidence, evidence=raw_evidence_list)
+    return _finalize_payload(
+        verification_results,
+        include_confidence=include_confidence,
+        evidence=raw_evidence_list,
+        classification=classification,
+        input_completeness=input_completeness,
+        required_domains=required_domains,
+    )
 
 
 def _finalize_payload(
@@ -425,15 +470,29 @@ def _finalize_payload(
     *,
     include_confidence: bool,
     evidence: list[dict[str, Any]] | None,
+    classification: Any = None,
+    input_completeness: float | None = None,
+    required_domains: list[str] | None = None,
 ) -> dict[str, Any]:
     """Wrap verification results and attach M5 confidence + abstention."""
     from .confidence import calculate_abstention, calculate_confidence
 
     payload = wrap_verification_payload(verification_results)
     if include_confidence:
-        confidence = calculate_confidence(verification_results, evidence=evidence)
+        confidence = calculate_confidence(
+            verification_results,
+            evidence=evidence,
+            classification=classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
+        )
         abstention = calculate_abstention(
-            verification_results, evidence=evidence, confidence=confidence
+            verification_results,
+            evidence=evidence,
+            confidence=confidence,
+            classification=classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
         )
         payload["confidence"] = confidence
         payload["abstain"] = abstention["abstain"]

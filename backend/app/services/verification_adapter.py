@@ -43,12 +43,23 @@ def verify(
     evidence: List[Dict[str, Any]],
     jurisdiction: str = "India",
     top_k: int = 3,
+    classification: Any = None,
+    input_completeness: float | None = None,
+    required_domains: List[str] | None = None,
 ) -> Dict[str, Any]:
     """
     claims: list of {"id": "...", "text": "..."}
     evidence: list of the normalized evidence dicts from rag_adapter.fetch_evidence
               (this backend adds "source" as an alias of "source_url" so
               verification/schemas.py's normalizer picks it up either way)
+
+    Optional evidence-sufficiency context forwarded to Member 5's confidence
+    / safe-abstention engine:
+      classification     — the M3 classification result (category confidence
+                           feeds the "unknown product" abstain gate).
+      input_completeness — fraction (0..1) of informative clarification answers.
+      required_domains   — legal domains expected for this product type; an
+                           empty list means the product type is unknown.
 
     Returns Member 5's full payload:
         {"verification": [...], "summary": {...}, "confidence": {...},
@@ -69,6 +80,9 @@ def verify(
             evidence=evidence_payload,
             top_k=top_k,
             target_jurisdiction=jurisdiction,
+            classification=classification,
+            input_completeness=input_completeness,
+            required_domains=required_domains,
         )
     except Exception:
          # Debugging fix (2026-09-13): this used to swallow the real error
