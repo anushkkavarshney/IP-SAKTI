@@ -3,6 +3,13 @@ Adapter for Member 5's verification module.
 
 This one needs almost no adaptation -- Member 5 documented the exact
 call pattern in verification/HANDOFF.md, so we just follow it.
+
+Update (2026-09-12): as of Member 5's confidence.py rewrite, verify_claims()
+now returns "confidence", "abstain", and "abstain_reason" as part of its own
+payload (computed with real authority-list scoring), superseding backend's
+old homebrew confidence calculation. The exception fallback below now
+matches that fuller shape so pipeline.py can read confidence/abstain
+uniformly whether verify_claims() succeeded or not.
 """
 
 import os
@@ -10,7 +17,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+
+import logging
+
+logger = logging.getLogger("ip_sakti_backend")
+
 # parents[0]=services, [1]=app, [2]=backend, [3]=repo root
+
 _REPO_ROOT = str(Path(__file__).resolve().parents[3])
 _VERIFICATION_DIR = os.path.join(_REPO_ROOT, "verification")
 
@@ -37,8 +50,9 @@ def verify(
               (this backend adds "source" as an alias of "source_url" so
               verification/schemas.py's normalizer picks it up either way)
 
-    Returns Member 5's payload:
-        {"support_type", "note", "verification": [...], "summary": {...}}
+    Returns Member 5's full payload:
+        {"verification": [...], "summary": {...}, "confidence": {...},
+         "abstain": bool, "abstain_reason": str, "abstain_reasons": [...]}
     """
     evidence_payload = {
         "jurisdiction": jurisdiction,
@@ -49,13 +63,6 @@ def verify(
     }
     claims_payload = {"jurisdiction": jurisdiction, "claims": claims}
 
-    # return verify_claims(
-    #     claims=claims_payload,
-    #     evidence=evidence_payload,
-    #     top_k=top_k,
-    #     target_jurisdiction=jurisdiction,
-    # )
-
     try:
         return verify_claims(
             claims=claims_payload,
@@ -64,6 +71,12 @@ def verify(
             target_jurisdiction=jurisdiction,
         )
     except Exception:
+         # Debugging fix (2026-09-13): this used to swallow the real error
+        # completely -- confidence would silently come back as 0 with no
+        # trace of why. Now the actual exception is logged server-side so
+        # "why is confidence always 0" has an answer instead of a guess.
+        logger.exception("verify_claims() failed -- falling back to abstain-only payload")
+        
         return {
             "verification": [],
             "summary": {
@@ -72,4 +85,20 @@ def verify(
                 "partially_supported_claims": 0,
                 "unsupported_claims": [{"claim": c.get("text", "")} for c in claims],
             },
+            "confidence": {
+                "score": 0.0,
+                "level": "LOW",
+                "signals": {
+                    "retrieval_quality": 0.0,
+                    "source_authority": 0.0,
+                    "claim_support": 0.0,
+                    "jurisdiction_match": 0.0,
+                },
+                "note": None,
+            },
+            "abstain": True,
+            "abstain_reason": (
+                "The verification service is currently unavailable, so no confident "
+                "analysis could be produced."
+            ),
         }

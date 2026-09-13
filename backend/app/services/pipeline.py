@@ -38,16 +38,29 @@ wouldn't catch):
    authority, description). Wrapped here instead of crashing Pydantic
    validation on the first real (non-empty) response.
 
+5. (2026-09-12, later) Member 5 added verification/confidence.py -- a real
+   confidence + abstention engine with authority-list scoring and
+   citation-integrity checks, computed INSIDE verify_claims() now. This
+   supersedes backend's old homebrew _confidence()/abstain calculation,
+   which was only ever a stand-in for something that didn't exist yet.
+   analyze() now reads confidence/abstain straight from
+   verification_adapter.verify()'s payload instead of computing its own.
+
 NOT fixed here (raised as an Integration Change Request to Member 3
 instead, since the data is lost inside their file before backend ever
 sees it): llm_pipeline/generator.py's own _normalize_evidence() still
 hardcodes evidence "authority"/"source_url" to NOT_PROVIDED, even though
 Member 4's corpus and retriever.py now return the real values.
+[NOTE: you already fixed this one yourself -- update this docstring line
+if it's no longer accurate in your copy.]
 """
 
+import logging
 from typing import Dict, List
 
 from . import verification_adapter
+
+logger = logging.getLogger("ip_sakti_backend")
 
 NOT_PROVIDED = "Not provided by the legal corpus yet"
 
@@ -75,13 +88,6 @@ CATEGORY_DISPLAY_MAP = {
     "unknown_insufficient_information": "Unknown / Insufficient Information",
 }
 
-CONFIDENCE_WEIGHTS = {
-    "retrieval_quality": 0.30,
-    "source_authority": 0.25,
-    "claim_support": 0.25,
-    "jurisdiction_match": 0.20,
-}
-
 
 def _fallback_questions() -> List[Dict]:
     """Only used if Member 3's clarification module can't be imported
@@ -98,6 +104,23 @@ def clarify(description: str) -> List[Dict]:
     wire_questions = []
     for q in questions:
         options = q.get("options") or []
+        is_text_input = q.get("input_type") == "text"
+
+        # Fix (2026-09-13): ClarificationWizard.tsx (frontend) has no free-
+        # text input UI at all -- it only renders clickable option buttons,
+        # and the submit button stays permanently disabled until
+        # answers[field_key] is set by clicking one. M3's q5 (jurisdiction)
+        # is input_type="text" with zero options, which meant this question
+        # could never be answered and users got stuck at step 5/5 forever.
+        # Since Roadmap.md explicitly scopes the MVP to India only, a real
+        # free-text field isn't even meaningful yet -- so we present it as a
+        # single clickable "India" option instead of waiting on a frontend
+        # change. If the MVP later supports multiple jurisdictions, this is
+        # the one place to add more options (or coordinate with M1 on adding
+        # real text-input support to the wizard).
+        if is_text_input and not options:
+            options = ["India"]
+
         wire_questions.append(
             {
                 "id": q["id"],
@@ -105,7 +128,7 @@ def clarify(description: str) -> List[Dict]:
                 "question": q["question"],
                 "description": q.get("purpose", ""),
                 "options": [{"value": opt, "label": opt} for opt in options],
-                "allow_text": q.get("input_type") == "text",
+                "allow_text": False,
             }
         )
     return wire_questions
@@ -170,40 +193,38 @@ def _build_items(claims: List[Dict], verification_results: List[Dict]) -> List[D
         )
     return items
 
-def _confidence(all_evidence: List[Dict], verification_results: List[Dict]) -> Dict:
-    """
-    Scale fix (2026-09-12): the frontend's ConfidenceCard.tsx renders
-    "{score}/100" and computes each signal's contribution as
-    signal * weight directly (e.g. retrieval_quality=90 * 0.30 = 27) --
-    i.e. it expects score AND every signal on a 0-100 scale, not 0.0-1.0.
-    Everything below is now computed on that 0-100 scale to match.
-    """
-    total = len(verification_results) or 1
-    supported_or_partial = sum(
-        1 for r in verification_results if r.get("status") in ("SUPPORTED", "PARTIALLY_SUPPORTED")
-    )
-    retrieval_quality = min(len(all_evidence) / 6.0, 1.0) * 100
-    source_authority = 0.0
-    claim_support = (supported_or_partial / total) * 100
-    jurisdiction_match = (sum(1 for r in verification_results if r.get("jurisdiction_match")) / total) * 100
 
-    signals = {
-        "retrieval_quality": round(retrieval_quality, 1),
-        "source_authority": round(source_authority, 1),
-        "claim_support": round(claim_support, 1),
-        "jurisdiction_match": round(jurisdiction_match, 1),
+def _fallback_verification_payload(claims: List[Dict]) -> Dict:
+    """Used when there are no claims/evidence to verify at all, or when
+    verification_adapter.verify() itself fails -- gives analyze() a
+    uniform shape to read confidence/abstain from either way."""
+    return {
+        "verification": [],
+        "summary": {
+            "total_claims": len(claims),
+            "supported_claims": 0,
+            "partially_supported_claims": 0,
+            "unsupported_claims": [],
+        },
+        "confidence": {
+            "score": 0.0,
+            "level": "LOW",
+            "signals": {
+                "retrieval_quality": 0.0,
+                "source_authority": 0.0,
+                "claim_support": 0.0,
+                "jurisdiction_match": 0.0,
+            },
+            "note": None,
+        },
+        "abstain": True,
+        "abstain_reason": (
+            "No claims or no evidence were available to verify, so no confident "
+            "analysis could be produced."
+        ),
     }
-    score = sum(signals[k] * CONFIDENCE_WEIGHTS[k] for k in CONFIDENCE_WEIGHTS)
-    level = "HIGH" if score >= 70 else "MEDIUM" if score >= 40 else "LOW"
-    note = None
-    if signals["source_authority"] == 0.0 and level == "HIGH":
-        level = "MEDIUM"
-        note = (
-            "Capped from HIGH: source authority is not yet verifiable "
-            "(the legal corpus doesn't provide an authority field yet)."
-        )
 
-    return {"score": round(score, 1), "level": level, "signals": signals, "note": note}
+
 def _evidence_chunks_for_ids(evidence_by_id: Dict[str, Dict], ids: List[str]) -> List[Dict]:
     return [_to_evidence_chunk(evidence_by_id[i]) for i in ids if i in evidence_by_id]
 
@@ -284,18 +305,28 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
     all_evidence = generated["evidence"]
     evidence_by_id = {e["id"]: e for e in all_evidence}
 
+        # Debugging fix (2026-09-13): "confidence always 0" with no exception
+    # anywhere means this branch below is silently taking the fallback path
+    # -- almost certainly because generate_roadmap()'s internal RAG call
+    # (Member 4) returned zero evidence for the query. Logging the actual
+    # counts here turns "confidence is 0, no idea why" into a concrete
+    # number instead of a guess.
+    print(f"[DEBUG] analyze(): {len(claims)} claims, {len(all_evidence)} evidence chunks from generate_roadmap()")
+
     if claims and all_evidence:
+        # verify() now returns confidence + abstention computed by Member 5
+        # (verification/confidence.py, added 2026-09-12) -- this SUPERSEDES
+        # backend's own homebrew _confidence()/abstain logic, which was only
+        # ever a stand-in because nothing existed yet. M5's version does
+        # real authority-list scoring and citation-integrity checks that
+        # backend could not replicate.
         verification_payload = verification_adapter.verify(claims, all_evidence, jurisdiction=jurisdiction)
-        verification_results = verification_payload.get("verification", [])
-        summary = verification_payload.get("summary", {})
     else:
-        verification_results = []
-        summary = {
-            "total_claims": len(claims),
-            "supported_claims": 0,
-            "partially_supported_claims": 0,
-            "unsupported_claims": [],
-        }
+        verification_payload = _fallback_verification_payload(claims)
+
+    verification_results = verification_payload.get("verification", [])
+    summary = verification_payload.get("summary", {})
+    confidence = verification_payload.get("confidence") or _fallback_verification_payload(claims)["confidence"]
 
     regulatory = {
         "jurisdiction": "India",
@@ -316,8 +347,6 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
         "evidence": _evidence_chunks_for_ids(evidence_by_id, generated["abs"].get("evidence_ids", [])),
     }
 
-    confidence = _confidence(all_evidence, verification_results)
-
     # Guardrail wiring fix (2026-09-12): generate_roadmap() already computes
     # cautious_language_check (forbidden absolute/guarantee-language scan,
     # Roadmap Section 9/42) via llm_pipeline/guardrails.py -- correctly --
@@ -329,19 +358,20 @@ def analyze(innovation_description: str, clarifications: Dict[str, str], jurisdi
     cautious_check = generated.get("cautious_language_check")
     guardrail_violation = bool(cautious_check) and not cautious_check.get("passed", True)
 
-    abstain = (
-        generated.get("abstain", False)
-        or len(all_evidence) == 0
-        or confidence["score"] < 30
-        or guardrail_violation
-    )
-    abstain_reason = generated.get("abstain_reason")
-    if guardrail_violation and not abstain_reason:
+    m5_abstain = verification_payload.get("abstain", False)
+    m5_abstain_reason = verification_payload.get("abstain_reason")
+
+    abstain = generated.get("abstain", False) or m5_abstain or guardrail_violation
+    if guardrail_violation:
         abstain_reason = (
             "The generated analysis used language that reads as a binding guarantee "
             "rather than cautious decision support, so it's being withheld pending review. "
             f"({cautious_check.get('note', '')})"
         )
+    elif m5_abstain_reason:
+        abstain_reason = m5_abstain_reason
+    else:
+        abstain_reason = generated.get("abstain_reason")
     if abstain and not abstain_reason:
         abstain_reason = (
             "Insufficient authoritative legal evidence was retrieved to support a confident roadmap. "
